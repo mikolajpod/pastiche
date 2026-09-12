@@ -100,6 +100,11 @@ public:
         std::fflush(stderr);
         printed_ = true;
     }
+    void log(const std::string& line) override
+    {
+        finish();
+        std::fprintf(stderr, "%s\n", line.c_str());
+    }
     void finish()
     {
         if (printed_) std::fprintf(stderr, "\n");
@@ -116,7 +121,12 @@ std::string resolve_models_dir(const std::string& from_flag)
     if (!from_flag.empty()) return from_flag;
     const std::string env = getenv_utf8("PASTICHE_MODELS_DIR");
     if (!env.empty()) return env;
-    return path_join(exe_dir(), "models");
+    const std::string beside = path_join(exe_dir(), "models");
+    if (dir_exists(beside)) return beside;
+    // Development layout: build/pastiche.exe with models/ in the repo root.
+    const std::string parent = path_join(path_dirname(exe_dir()), "models");
+    if (dir_exists(parent)) return parent;
+    return beside;
 }
 
 std::string human_bytes(uint64_t b)
@@ -275,10 +285,11 @@ int run_cli(const std::vector<std::string>& args)
         std::fprintf(stderr, "params: %s\n", params_to_json(specs, params).c_str());
     }
 
-    // VRAM estimate is reported here; the refusal against free memory arrives
-    // with the GPU backends (the estimate is 0 for CPU-only algorithms).
+    // VRAM estimate and refusal (D5): nothing is scaled automatically.
     const uint64_t vram = algo->estimate_vram(content.width, content.height, params, opts);
     if (cli.verbose && vram > 0) std::fprintf(stderr, "estimated GPU memory: %s\n", human_bytes(vram).c_str());
+    err = algo->preflight(content.width, content.height, params, opts);
+    if (!err.empty()) { std::fprintf(stderr, "error: %s\n", err.c_str()); return EX_VRAM; }
 
     // Run.
     ConsoleProgress progress;

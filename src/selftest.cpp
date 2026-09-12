@@ -1,7 +1,10 @@
 #include "selftest.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace pastiche {
 
@@ -57,10 +60,33 @@ int run_selftest(const RunOptions& opts)
             problem = "size " + std::to_string(r.image.width) + "x" + std::to_string(r.image.height) +
                       " != " + std::to_string(content.width) + "x" + std::to_string(content.height);
         else if (is_uniform(r.image)) problem = "output is a uniform colour";
+        std::string extra;
+        if (problem.empty() && !r.backend_used.empty() && r.backend_used != "cpu") {
+            // Reference run on the CPU execution provider; GPU fp32 should agree closely.
+            RunOptions cpu_opts = opts;
+            cpu_opts.backend = "cpu";
+            RunResult ref = algo->run(content, style, style_name, params, cpu_opts, progress);
+            if (!ref.ok()) problem = "cpu reference failed: " + ref.error;
+            else if (ref.image.data.size() != r.image.data.size()) problem = "cpu reference has a different size";
+            else {
+                double sum = 0;
+                int maxd = 0;
+                for (size_t i = 0; i < r.image.data.size(); ++i) {
+                    const int d = std::abs(int(r.image.data[i]) - int(ref.image.data[i]));
+                    sum += d;
+                    maxd = std::max(maxd, d);
+                }
+                const double mean = sum / r.image.data.size();
+                char buf[96];
+                std::snprintf(buf, sizeof buf, ", vs cpu: mean diff %.2f, max %d", mean, maxd);
+                extra = buf;
+                if (mean > 2.0) problem = std::string("differs from cpu reference too much") + buf;
+            }
+        }
         if (problem.empty()) {
-            std::printf("%-14s %-6s %.1f ms, hash %016llx%s%s\n", id.c_str(), "PASS", ms,
+            std::printf("%-14s %-6s %.1f ms, hash %016llx%s%s%s\n", id.c_str(), "PASS", ms,
                         static_cast<unsigned long long>(image_hash(r.image)),
-                        r.backend_used.empty() ? "" : ", backend ", r.backend_used.c_str());
+                        r.backend_used.empty() ? "" : ", backend ", r.backend_used.c_str(), extra.c_str());
             ++passed;
         } else {
             std::printf("%-14s %-6s %s\n", id.c_str(), "FAIL", problem.c_str());

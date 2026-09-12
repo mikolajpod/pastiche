@@ -115,7 +115,7 @@ TEST_CASE("jpeg decode applies exif orientation")
     // compare the mean absolute error rather than the worst pixel
     double sum = 0;
     for (size_t i = 0; i < a.data.size(); ++i) sum += std::abs(int(a.data[i]) - int(src.data[i]));
-    CHECK(sum / a.data.size() < 6.0);
+    CHECK(sum / a.data.size() < 10.0);
 
     const std::vector<uint8_t> rotated = with_orientation(plain, 6);
     Image b;

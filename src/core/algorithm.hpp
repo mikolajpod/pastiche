@@ -35,6 +35,9 @@ public:
     virtual bool cancelled() const { return false; }
     // Intermediate result (diffusion only); may be ignored.
     virtual void preview(const Image& img) { (void)img; }
+    // Diagnostic line (verbose mode); the CLI prints it without breaking the
+    // progress display, the GUI may append it to a log.
+    virtual void log(const std::string& line) { (void)line; }
 };
 
 struct RunResult {
@@ -69,6 +72,15 @@ public:
     // GPU memory in bytes needed to process a w x h content image with these
     // parameters (activations + weights). 0 = nothing / unknown.
     virtual uint64_t estimate_vram(int w, int h, const Params& p, const RunOptions& opts) const = 0;
+
+    // Called before run() by the CLI and GUI. Returns "" when the run may go
+    // ahead, otherwise a user-facing reason to refuse (typically: the VRAM
+    // estimate exceeds the free GPU memory, with a suggested --size).
+    virtual std::string preflight(int w, int h, const Params& p, const RunOptions& opts) const
+    {
+        (void)w; (void)h; (void)p; (void)opts;
+        return {};
+    }
 
     // style is non-null only for StyleInput::Image; style_name is the raw
     // <style> argument (preset name or path) for the other kinds.
