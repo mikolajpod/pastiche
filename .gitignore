@@ -1,0 +1,34 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+
+# Runtime output
+out/
+
+# Packaged release
+pastiche-*-win64/
+*.zip
+
+# Models: only README is tracked, weights are downloaded or generated
+models/*
+!models/README.md
+
+# Third-party binaries (ONNX Runtime, DirectML, downloaded weights)
+third_party/
+
+# Research papers are large (8-37 MB each); figures cmp_*.png stay tracked
+research/*.pdf
+
+# ImGui layout (user-local)
+imgui.ini
+
+# Local benchmark baseline (machine-specific)
+benchmark_baseline.txt
+
+# Claude Code local settings
+.claude/
+
+# Python
+__pycache__/
+*.pyc
