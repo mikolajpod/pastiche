@@ -219,3 +219,46 @@ Data rozpoczęcia: 2026-09-12
      i kompilacja na Linuxie, THIRD-PARTY-LICENSES, README, wydanie 1.0.
 - Magenta arbitrary stylization tylko jeśli AdaIN po etapie 3 okaże się
   wizualnie za słaby.
+
+## D18. GUI: szczegóły realizacji (2026-09-13)
+
+- Układ 2x2 w jednym oknie ImGui bez dokowania: treść, styl, wynik, panel
+  parametrów. Każdy kafelek to child window z ramką; obraz skalowany do
+  kafelka z zachowaniem proporcji, wyśrodkowany.
+- Panel parametrów generowany w całości z ParamSpec (Int/Float -> slider gdy
+  zakres domknięty, inaczej InputInt/InputFloat; Bool -> checkbox; Enum ->
+  combo; String -> InputText). Opis parametru jako tooltip. Dodanie
+  algorytmu nie wymaga zmian w guimain.cpp.
+- Wątek roboczy: kopia obrazów i parametrów przekazywana do wątku przez
+  shared_ptr/wartość, wynik odbierany co klatkę pod mutexem (D9). W trakcie
+  liczenia panel wyszarzony (BeginDisabled), podmiana obrazów wejściowych
+  dozwolona.
+- Anulowanie: pojedyncze Run() w ORT trwa sekundy i nie da się go odpytywać
+  od środka, więc OrtModel::run() uruchamia wątek-strażnik, który co 50 ms
+  sprawdza Progress::cancelled() i ustawia flagę RunOptionsSetTerminate.
+  run() zwraca wtedy sentinel kCancelled, algorytm zamienia go na
+  RunResult::aborted(), plik nie powstaje. Flaga jest czyszczona
+  (RunOptionsUnsetTerminate) przed każdym biegiem.
+- Dialogi plików: nativefiledialog-extended v1.2.1 (zlib) przez FetchContent.
+  Przeciąganie plików na okno: pierwszy plik jako treść, drugi jako styl.
+- Autozapis do <out-dir>/YYYYMMDD_HHMMSS.png + .json; przy kolizji nazw
+  dopisywany sufiks _2. Sidecar JSON wspólny dla CLI i GUI
+  (src/core/sidecar.cpp).
+- Weryfikacja GUI bez człowieka przy klawiaturze: tools/gui_shot.ps1
+  uruchamia okno, odgrywa kliknięcia/wpisywanie i zapisuje zrzuty. To nie są
+  testy automatyczne (D12 ich nie przewiduje), tylko narzędzie do obejrzenia
+  skutków zmiany. Sprawdzone: wczytanie plików z argv, obrót EXIF, bieg
+  Johnson/candy na DirectML (1,0 s), wynik w kafelku, autozapis z sidecarem,
+  przełączenie backendu na CPU, anulowanie w trakcie inferencji (panel wraca,
+  status "Cancelled.", brak pliku).
+
+## D19. Pobieranie modeli przesunięte za etap 4 (2026-09-13)
+
+- D13 wymieniał "download modeli" w etapie 4, ale nie ma dziś czego pobierać:
+  wszystkie modele etapów 2-3 (Johnson, AdaIN) są w wydaniu, a repozytorium
+  nie jest jeszcze na GitHubie, więc models.json nie miałby prawdziwych URL-i
+  ani sum SHA-256.
+- Decyzja: klient HTTP i podkomenda `pastiche download <nazwa>` powstaną
+  w etapie 5, razem z pierwszymi modelami wymagającymi pobrania (SD 1.5,
+  IP-Adapter z Hugging Face) i z ekranem akceptacji licencji OpenRAIL-M.
+  Na Windowsie WinHTTP (bez nowej zależności), na Linuxie libcurl.

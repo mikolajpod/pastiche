@@ -51,6 +51,10 @@ private:
 };
 
 // One loaded model. Not thread-safe; one session per worker.
+// Sentinel returned by OrtModel::run() when the run was terminated through the
+// Progress cancellation flag. Algorithms turn it into RunResult::aborted().
+extern const char* const kCancelled;
+
 class OrtModel {
 public:
     OrtModel();
@@ -66,16 +70,20 @@ public:
     const std::vector<std::string>& output_names() const { return outputs_; }
 
     // Float tensors in, float tensors out. Shapes are NCHW-style int64 dims.
+    // When `progress` is given, a watchdog polls progress->cancelled() while the
+    // session runs and terminates it; run() then returns kCancelled.
     std::string run(const std::vector<std::string>& in_names,
                     const std::vector<const float*>& in_data,
                     const std::vector<std::vector<int64_t>>& in_shapes,
                     const std::vector<std::string>& out_names,
                     std::vector<std::vector<float>>& out_data,
-                    std::vector<std::vector<int64_t>>& out_shapes);
+                    std::vector<std::vector<int64_t>>& out_shapes,
+                    Progress* progress = nullptr);
 
     // Convenience for single-input single-output models.
     std::string run(const float* input, const std::vector<int64_t>& in_shape,
-                    std::vector<float>& output, std::vector<int64_t>& out_shape);
+                    std::vector<float>& output, std::vector<int64_t>& out_shape,
+                    Progress* progress = nullptr);
 
     // May be called from another thread to abort a running run() early.
     void terminate();
@@ -93,6 +101,12 @@ private:
 // user-facing refusal that names the amounts and a suggested --size (and
 // --tile when the algorithm supports it).
 std::string vram_preflight(const IStyleAlgorithm& algo, int w, int h, const Params& p, const RunOptions& opts);
+
+// Largest longer side (multiple of 64, >= 256) at which algo.estimate_vram()
+// fits into `available` bytes for an image with the aspect of w x h; 0 when
+// even 256 px does not fit.
+int vram_suggest_size(const IStyleAlgorithm& algo, int w, int h, const Params& p, const RunOptions& opts,
+                      uint64_t available);
 
 std::string human_size(uint64_t bytes);
 

@@ -16,7 +16,7 @@ sections that follow or shipped alongside the binaries as noted.
 | highway, brotli (libjxl deps) | - | Apache-2.0 / MIT | via libjxl                                |
 | SDL2 (GUI)       | 2.32.x   | zlib               | https://libsdl.org                          |
 | Dear ImGui (GUI) | 1.91.x   | MIT                | https://github.com/ocornut/imgui            |
-| nativefiledialog-extended (GUI) | - | zlib          | https://github.com/btzy/nativefiledialog-extended |
+| nativefiledialog-extended (GUI) | 1.2.1 | zlib | https://github.com/btzy/nativefiledialog-extended |
 | doctest (tests only, not shipped) | 2.4.11 | MIT   | https://github.com/doctest/doctest          |
 | MinGW-w64 runtime DLLs (libstdc++, libgcc, libwinpthread) | GCC 15 | GPL-3.0 with GCC Runtime Library Exception | https://gcc.gnu.org |
 
@@ -32,8 +32,8 @@ sections that follow or shipped alongside the binaries as noted.
 
 | Model | Licence | Source | Shipped in release |
 |-------|---------|--------|--------------------|
-| Johnson fast-neural-style: candy, mosaic, rain_princess, udnie (+ pointilism) | BSD-3-Clause (pytorch/examples); ONNX export from the ONNX Model Zoo (Apache-2.0 repository) | https://github.com/pytorch/examples/tree/main/fast_neural_style, https://github.com/onnx/models | yes |
-| AdaIN (VGG encoder + decoder) | MIT (naoto0804/pytorch-AdaIN) | https://github.com/naoto0804/pytorch-AdaIN | yes (planned) |
+| Johnson fast-neural-style: candy, mosaic, rain_princess, udnie (pytorch/examples) and pointilism (trained by the ONNX Model Zoo maintainers) | BSD-3-Clause (pytorch/examples); ONNX exports from the ONNX Model Zoo (Apache-2.0 repository) | https://github.com/pytorch/examples/tree/main/fast_neural_style, https://github.com/onnx/models (validated/vision/style_transfer/fast_neural_style) | yes: `models/johnson-*.onnx` |
+| AdaIN: VGG-19 encoder (normalised, up to relu4_1) and decoder | MIT (naoto0804/pytorch-AdaIN, Copyright (c) 2018 Naoto Inoue); VGG-19 weights originate from Simonyan & Zisserman 2014 (Visual Geometry Group, Oxford) | https://github.com/naoto0804/pytorch-AdaIN/releases/tag/v0.0.0 | yes: `models/adain-encoder.onnx`, `models/adain-decoder.onnx` |
 | Stable Diffusion 1.5 | CreativeML OpenRAIL-M | Hugging Face | no - user download with licence prompt |
 | IP-Adapter, ControlNet 1.1 | Apache-2.0 | Hugging Face | no - user download |
 

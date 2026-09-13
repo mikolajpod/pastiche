@@ -10,12 +10,16 @@ and the staged plan.
 
 ## Algorithms
 
-| id         | style input | speed  | notes                                              |
-|------------|-------------|--------|----------------------------------------------------|
-| `identity` | none        | -      | copies the content image; pipeline test            |
-| `johnson`  | preset      | fast   | Johnson et al. 2016 feed-forward nets, bundled styles (stage 2) |
-| `adain`    | image       | fast   | Huang & Belongie 2017, arbitrary style (stage 3)   |
-| `sd`       | image       | slow   | SD 1.5 + IP-Adapter img2img via stable-diffusion.cpp (stage 5) |
+| id         | style input | speed (T2000, 1024 px) | notes                                    |
+|------------|-------------|------------------------|------------------------------------------|
+| `identity` | none        | -                      | copies the content image; pipeline test  |
+| `johnson`  | preset      | ~0.8 s DirectML        | Johnson et al. 2016 feed-forward nets; presets candy, mosaic, pointilism, rain_princess, udnie (BSD-3) |
+| `adain`    | image       | ~1.1 s DirectML        | Huang & Belongie 2017, arbitrary style; `alpha`, `style_size`; tiling with global statistics |
+| `sd`       | image       | slow                   | SD 1.5 + IP-Adapter img2img via stable-diffusion.cpp (planned, stage 5) |
+
+Both ONNX algorithms refuse to start when the estimated GPU memory exceeds
+what is free, and print the `--size` that would fit (plus `--tile` where
+supported). Nothing is rescaled silently.
 
 ## Command line
 
@@ -44,6 +48,27 @@ Parameters are declared by each algorithm; `pastiche --help <algo>` prints
 them with types, ranges and defaults. The GUI builds its controls from the
 same declarations.
 
+## GUI
+
+`pastiche-gui` shows a 2x2 grid: content image, style image, result and a
+parameter panel built from the algorithm's own parameter declarations. Open
+images from the File menu or drop them on the window; the first file becomes
+the content, the second the style. Optional arguments preload them:
+
+```
+pastiche-gui [content-image] [style-image]
+```
+
+The run happens on a worker thread, so the window stays responsive: the
+progress bar shows the stage, Cancel stops the work (a cancelled run writes no
+file) and the parameter panel is greyed out until it finishes. Every result is
+saved automatically to the output folder as `YYYYMMDD_HHMMSS.png` with a
+matching `.json`; "Save as..." writes a copy elsewhere and "Use as content"
+feeds the result back in for chaining.
+
+When the estimated GPU memory does not fit, the panel explains why and offers
+a one-click smaller size instead of silently rescaling.
+
 ## Building (Windows, MSYS2 MinGW-w64)
 
 ```bash
@@ -65,14 +90,38 @@ expects the Microsoft binaries under `third_party/onnxruntime/` (`include/`,
 `bin/onnxruntime.dll`, `bin/DirectML.dll`). See `THIRD-PARTY-LICENSES.md`
 for where they come from.
 
+Dear ImGui and nativefiledialog-extended are fetched at configure time with
+pinned tags; `-DPASTICHE_BUILD_GUI=OFF` builds the command-line tool alone, and
+`-DPASTICHE_BUILD_TESTS=OFF` skips doctest.
+
 Linux: builds with the same CMake project (CPU or CUDA execution provider);
 see `BUILD-linux.md` once available.
+
+There are no automated GUI tests. `tools/gui_shot.ps1` (Windows, PowerShell)
+starts the window, replays clicks and keystrokes and saves screenshots, which
+is how GUI changes are checked:
+
+```powershell
+& .\tools\gui_shot.ps1 -Exe build\pastiche-gui.exe `
+    -AppArgs D:\hg\style\testdata\content.png,D:\hg\style\testdata\style.png `
+    -Steps "click:771,754","wait:4000","shot:build/gui_done.png"
+```
 
 ## Models
 
 Only permissively licensed weights ship with the release (`models/`). Others
 are downloaded on demand (`pastiche download <name>`, planned) with their
-licence shown first. Model conversion scripts live in `tools/`.
+licence shown first.
+
+The bundled ONNX files are produced by the scripts in `tools/` (Python 3 with
+`numpy` and `onnx`; no PyTorch needed):
+
+```
+# Johnson: ONNX Model Zoo exports (candy-9.onnx etc.) -> dynamic-size models
+python tools/prepare_johnson_onnx.py <dir with *-9.onnx> models
+# AdaIN: decoder.pth + vgg_normalised.pth from naoto0804/pytorch-AdaIN releases
+python tools/prepare_adain_onnx.py <dir with the .pth files> models
+```
 
 ## Licence
 

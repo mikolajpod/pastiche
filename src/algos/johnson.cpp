@@ -114,7 +114,8 @@ public:
                                               : "tile " + std::to_string(i + 1) + "/" + std::to_string(tiles.size()));
             const TileRect& r = tiles[i];
             Image piece;
-            err = infer(model, tiles.size() == 1 ? rgb : crop(rgb, r.x, r.y, r.w, r.h), piece);
+            err = infer(model, tiles.size() == 1 ? rgb : crop(rgb, r.x, r.y, r.w, r.h), piece, progress);
+            if (err == kCancelled) return RunResult::aborted();
             if (!err.empty()) return RunResult::fail(err);
             if (tiles.size() == 1) stylised = std::move(piece);
             else blender.add(piece, r);
@@ -146,14 +147,14 @@ public:
 
 private:
     // Runs the network on one RGB image (any size); output has the same size.
-    static std::string infer(OrtModel& model, const Image& rgb, Image& out)
+    static std::string infer(OrtModel& model, const Image& rgb, Image& out, Progress& progress)
     {
         const Image padded = pad_to_multiple(rgb, kAlign);
         std::vector<float> in;
         image_to_chw(padded, in, 1.f);
         std::vector<float> outv;
         std::vector<int64_t> out_shape;
-        const std::string err = model.run(in.data(), {1, 3, padded.height, padded.width}, outv, out_shape);
+        const std::string err = model.run(in.data(), {1, 3, padded.height, padded.width}, outv, out_shape, &progress);
         if (!err.empty()) return err;
         if (out_shape.size() != 4 || out_shape[1] != 3 || out_shape[2] != padded.height || out_shape[3] != padded.width)
             return "unexpected output shape from the style network";

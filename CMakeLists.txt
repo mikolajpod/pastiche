@@ -40,6 +40,7 @@ add_library(pastiche-core STATIC
     src/core/algorithm.cpp
     src/core/gpu_info.cpp
     src/core/tiling.cpp
+    src/core/sidecar.cpp
     src/backends/ort_session.cpp
 )
 target_include_directories(pastiche-core PUBLIC
@@ -93,6 +94,65 @@ if(WIN32 AND EXISTS "${PASTICHE_ORT_DIR}/bin/onnxruntime.dll")
     add_custom_command(TARGET pastiche POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PASTICHE_RUNTIME_DLLS} $<TARGET_FILE_DIR:pastiche>
         COMMENT "Copying ONNX Runtime DLLs next to pastiche.exe")
+endif()
+
+# --- pastiche-gui: Dear ImGui + SDL2 + OpenGL 3.3, native file dialogs
+if(PASTICHE_BUILD_GUI)
+    include(FetchContent)
+    # SDL2 - install via: pacman -S mingw-w64-x86_64-SDL2
+    find_package(SDL2 REQUIRED)
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.6
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(imgui)
+    FetchContent_Declare(
+        nfd
+        GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+        GIT_TAG        v1.2.1
+        GIT_SHALLOW    TRUE
+    )
+    set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(nfd)
+
+    set(IMGUI_SOURCES
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    add_executable(pastiche-gui
+        src/guimain.cpp
+        ${IMGUI_SOURCES}
+        $<TARGET_OBJECTS:pastiche-algos>
+    )
+    target_include_directories(pastiche-gui PRIVATE
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    # OpenGL: opengl32 is Windows-only; use the imported target elsewhere (Linux)
+    if(WIN32)
+        set(OPENGL_LIBS opengl32)
+    else()
+        find_package(OpenGL REQUIRED)
+        set(OPENGL_LIBS OpenGL::GL)
+    endif()
+    target_link_libraries(pastiche-gui PRIVATE
+        pastiche-core
+        SDL2::SDL2main
+        SDL2::SDL2
+        ${OPENGL_LIBS}
+        nfd
+    )
+    # Hide the console window on Windows (SDL2main bridges WinMain -> main)
+    if(WIN32)
+        target_link_options(pastiche-gui PRIVATE -mwindows)
+    endif()
 endif()
 
 # --- tests (doctest, MIT)

@@ -29,10 +29,12 @@ constexpr double kEps = 1e-5;    // as in function.py calc_mean_std
 
 // DirectML footprint (fp32, ORT 1.22) measured on a Quadro T2000 with -v:
 //   512x384 -> 710 MiB, 768x576 -> 1.06 GiB, 1024x768 -> 2.05 GiB,
-//   768x768 tiles -> 2.04 GiB. The DML allocator rounds buffers up to powers
-// of two, hence the jumps; the constants below envelope the measurements.
+//   960x960 -> 2.05 GiB, 1080x1080 -> 4.02 GiB (over budget, spilled, 2x
+//   slower), 768x768 tiles -> 2.04 GiB. The DML allocator rounds buffers up
+// to powers of two, hence the jumps; the constants envelope the measurements
+// so that 1080x1080 is refused on a 4 GiB card and 960x960 is allowed.
 constexpr uint64_t kFixedBytes = 200ull << 20;
-constexpr uint64_t kBytesPerPixel = 2700;
+constexpr uint64_t kBytesPerPixel = 3500;
 
 struct Stats {
     std::vector<double> mean, stdev;
@@ -129,7 +131,8 @@ public:
         if (style_size > 0) style_rgb = fit_longest_side(style_rgb, style_size, true);
         std::vector<float> style_feat;
         int sfw = 0, sfh = 0;
-        err = encode(encoder, style_rgb, style_feat, sfw, sfh);
+        err = encode(encoder, style_rgb, style_feat, sfw, sfh, progress);
+        if (err == kCancelled) return RunResult::aborted();
         if (!err.empty()) return RunResult::fail(err);
         std::vector<double> ssum(kChannels, 0.0), ssq(kChannels, 0.0);
         accumulate(style_feat, sfw * sfh, ssum, ssq);
@@ -151,7 +154,9 @@ public:
                             tiles.size() == 1 ? "encoding content on " + backend
                                               : "encoding tile " + std::to_string(i + 1) + "/" + std::to_string(tiles.size()));
             const TileRect& r = tiles[i];
-            err = encode(encoder, tiles.size() == 1 ? rgb : crop(rgb, r.x, r.y, r.w, r.h), feats[i].feat, feats[i].fw, feats[i].fh);
+            err = encode(encoder, tiles.size() == 1 ? rgb : crop(rgb, r.x, r.y, r.w, r.h), feats[i].feat, feats[i].fw,
+                         feats[i].fh, progress);
+            if (err == kCancelled) return RunResult::aborted();
             if (!err.empty()) return RunResult::fail(err);
             accumulate(feats[i].feat, feats[i].fw * feats[i].fh, csum, csq);
             count += static_cast<double>(feats[i].fw) * feats[i].fh;
@@ -180,7 +185,8 @@ public:
             }
             const TileRect& r = tiles[i];
             Image piece;
-            err = decode(decoder, tf.feat, tf.fw, tf.fh, r.w, r.h, piece);
+            err = decode(decoder, tf.feat, tf.fw, tf.fh, r.w, r.h, piece, progress);
+            if (err == kCancelled) return RunResult::aborted();
             if (!err.empty()) return RunResult::fail(err);
             tf.feat.clear();
             tf.feat.shrink_to_fit();
@@ -205,13 +211,15 @@ public:
 
 private:
     // RGB image -> relu4_1 features of the image padded to a multiple of 8.
-    static std::string encode(OrtModel& encoder, const Image& rgb, std::vector<float>& feat, int& fw, int& fh)
+    static std::string encode(OrtModel& encoder, const Image& rgb, std::vector<float>& feat, int& fw, int& fh,
+                              Progress& progress)
     {
         const Image padded = pad_to_multiple(rgb, kAlign);
         std::vector<float> in;
         image_to_chw(padded, in, 1.f / 255.f);
         std::vector<int64_t> shape;
-        const std::string err = encoder.run(in.data(), {1, 3, padded.height, padded.width}, feat, shape);
+        const std::string err = encoder.run(in.data(), {1, 3, padded.height, padded.width}, feat, shape, &progress);
+        if (err == kCancelled) return err;
         if (!err.empty()) return "encoder: " + err;
         if (shape.size() != 4 || shape[1] != kChannels || shape[2] != padded.height / kAlign || shape[3] != padded.width / kAlign)
             return "encoder returned an unexpected feature shape";
@@ -221,11 +229,13 @@ private:
     }
 
     // Features -> RGB image cropped to w x h.
-    static std::string decode(OrtModel& decoder, const std::vector<float>& feat, int fw, int fh, int w, int h, Image& out)
+    static std::string decode(OrtModel& decoder, const std::vector<float>& feat, int fw, int fh, int w, int h,
+                              Image& out, Progress& progress)
     {
         std::vector<float> img;
         std::vector<int64_t> shape;
-        const std::string err = decoder.run(feat.data(), {1, kChannels, fh, fw}, img, shape);
+        const std::string err = decoder.run(feat.data(), {1, kChannels, fh, fw}, img, shape, &progress);
+        if (err == kCancelled) return err;
         if (!err.empty()) return "decoder: " + err;
         if (shape.size() != 4 || shape[1] != 3 || shape[2] != fh * kAlign || shape[3] != fw * kAlign)
             return "decoder returned an unexpected image shape";

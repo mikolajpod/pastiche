@@ -9,6 +9,7 @@
 #include "core/algorithm.hpp"
 #include "core/fs.hpp"
 #include "core/image_io.hpp"
+#include "core/sidecar.hpp"
 #include "selftest.hpp"
 #include "version.hpp"
 
@@ -308,25 +309,22 @@ int run_cli(const std::vector<std::string>& args)
     if (!err.empty()) { std::fprintf(stderr, "error: %s\n", err.c_str()); return EX_RUN; }
 
     const double secs = std::chrono::duration<double>(t_end - t_run).count();
-    std::string json = "{\n";
-    json += "  \"app\": \"pastiche\",\n";
-    json += "  \"version\": " + json_quote(PASTICHE_VERSION) + ",\n";
-    json += "  \"timestamp\": " + json_quote(iso_time_now()) + ",\n";
-    json += "  \"algorithm\": " + json_quote(algo_id) + ",\n";
-    json += "  \"content\": " + json_quote(absolute_path(content_path)) + ",\n";
-    json += "  \"style\": " + (style_name.empty() && !style ? std::string("null") : json_quote(style ? absolute_path(style_arg) : style_name)) + ",\n";
-    json += "  \"output\": " + json_quote(absolute_path(out_path)) + ",\n";
-    json += "  \"content_size\": [" + std::to_string(orig_w) + ", " + std::to_string(orig_h) + "],\n";
-    json += "  \"processed_size\": [" + std::to_string(content.width) + ", " + std::to_string(content.height) + "],\n";
-    json += "  \"output_size\": [" + std::to_string(result.image.width) + ", " + std::to_string(result.image.height) + "],\n";
-    json += "  \"size\": " + std::to_string(cli.size) + ",\n";
-    json += "  \"tile\": " + std::string(cli.tile ? "true" : "false") + ",\n";
-    json += "  \"backend\": " + (result.backend_used.empty() ? std::string("null") : json_quote(result.backend_used)) + ",\n";
-    json += "  \"params\": " + params_to_json(specs, params) + ",\n";
-    json += "  \"time_seconds\": " + json_number(secs) + "\n";
-    json += "}\n";
-    const std::string json_path = replace_extension(out_path, ".json");
-    err = write_text_file(json_path, json);
+    RunRecord rec;
+    rec.algorithm = algo_id;
+    rec.content_path = content_path;
+    if (style) rec.style_path = style_arg;
+    else rec.style_name = style_name;
+    rec.output_path = out_path;
+    rec.backend = result.backend_used;
+    rec.content_w = orig_w; rec.content_h = orig_h;
+    rec.processed_w = content.width; rec.processed_h = content.height;
+    rec.output_w = result.image.width; rec.output_h = result.image.height;
+    rec.size = cli.size;
+    rec.tile = cli.tile;
+    rec.time_seconds = secs;
+    rec.specs = specs;
+    rec.params = params;
+    err = write_sidecar(replace_extension(out_path, ".json"), rec);
     if (!err.empty()) { std::fprintf(stderr, "warning: %s\n", err.c_str()); }
 
     if (cli.verbose) {

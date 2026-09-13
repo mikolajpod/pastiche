@@ -6,9 +6,12 @@
 #include <onnxruntime_c_api.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -215,6 +218,43 @@ std::string OrtRuntime::resolve_backend(const std::string& requested, std::strin
 // ---------------------------------------------------------------------------
 // OrtModel
 // ---------------------------------------------------------------------------
+const char* const kCancelled = "__pastiche_cancelled__";
+
+namespace {
+
+// Polls Progress::cancelled() while a session runs and terminates it. Does
+// nothing (and starts no thread) when there is no progress sink.
+class CancelWatchdog {
+public:
+    CancelWatchdog(OrtModel& model, Progress* progress)
+    {
+        if (!progress) return;
+        thread_ = std::thread([this, &model, progress]() {
+            while (!stop_.load(std::memory_order_relaxed)) {
+                if (progress->cancelled()) {
+                    fired_.store(true, std::memory_order_relaxed);
+                    model.terminate();
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        });
+    }
+    ~CancelWatchdog()
+    {
+        stop_.store(true, std::memory_order_relaxed);
+        if (thread_.joinable()) thread_.join();
+    }
+    bool fired() const { return fired_.load(std::memory_order_relaxed); }
+
+private:
+    std::thread thread_;
+    std::atomic<bool> stop_{false};
+    std::atomic<bool> fired_{false};
+};
+
+} // namespace
+
 OrtModel::OrtModel() = default;
 
 OrtModel::~OrtModel()
@@ -295,11 +335,19 @@ std::string OrtModel::run(const std::vector<std::string>& in_names,
                           const std::vector<std::vector<int64_t>>& in_shapes,
                           const std::vector<std::string>& out_names,
                           std::vector<std::vector<float>>& out_data,
-                          std::vector<std::vector<int64_t>>& out_shapes)
+                          std::vector<std::vector<int64_t>>& out_shapes,
+                          Progress* progress)
 {
     const OrtApi* api = OrtRuntime::instance().api();
     if (!api || !session_) return "model not loaded";
     if (in_names.size() != in_data.size() || in_names.size() != in_shapes.size()) return "run: input count mismatch";
+    if (progress && progress->cancelled()) return kCancelled;
+
+    // A single Run() on a large image takes seconds and cannot be polled from
+    // the inside, so a watchdog thread flips the ORT terminate flag when the
+    // user cancels (D9). The flag is cleared again before every run.
+    api->RunOptionsUnsetTerminate(run_options_);
+    CancelWatchdog watchdog(*this, progress);
 
     OrtMemoryInfo* mem = nullptr;
     ORT_CHECK(api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem));
@@ -325,7 +373,11 @@ std::string OrtModel::run(const std::vector<std::string>& in_names,
 
     OrtStatus* st = api->Run(session_, run_options_, in_c.data(), inputs.data(), inputs.size(),
                              out_c.data(), out_c.size(), outputs.data());
-    if (st) return "Run: " + status_message(api, st);
+    if (st) {
+        const std::string msg = status_message(api, st);
+        if (watchdog.fired()) return kCancelled;   // terminated on purpose
+        return "Run: " + msg;
+    }
 
     out_data.assign(out_names.size(), {});
     out_shapes.assign(out_names.size(), {});
@@ -350,14 +402,15 @@ std::string OrtModel::run(const std::vector<std::string>& in_names,
 }
 
 std::string OrtModel::run(const float* input, const std::vector<int64_t>& in_shape,
-                          std::vector<float>& output, std::vector<int64_t>& out_shape)
+                          std::vector<float>& output, std::vector<int64_t>& out_shape,
+                          Progress* progress)
 {
     if (inputs_.size() != 1 || outputs_.size() != 1)
         return "model has " + std::to_string(inputs_.size()) + " inputs and " + std::to_string(outputs_.size()) +
                " outputs; expected 1 and 1";
     std::vector<std::vector<float>> outs;
     std::vector<std::vector<int64_t>> shapes;
-    const std::string err = run({inputs_[0]}, {input}, {in_shape}, {outputs_[0]}, outs, shapes);
+    const std::string err = run({inputs_[0]}, {input}, {in_shape}, {outputs_[0]}, outs, shapes, progress);
     if (!err.empty()) return err;
     output = std::move(outs[0]);
     out_shape = std::move(shapes[0]);
@@ -390,6 +443,20 @@ std::string gpu_usage_line(const GpuMemoryInfo& before, const GpuMemoryInfo& aft
            ", budget " + human_size(after.budget) + ")";
 }
 
+int vram_suggest_size(const IStyleAlgorithm& algo, int w, int h, const Params& p, const RunOptions& opts,
+                      uint64_t available)
+{
+    // Activations scale with area, so walk the longer side down in 64 px steps.
+    const int longest = std::max(w, h);
+    for (int n = (longest / 64) * 64 - 64; n >= 256; n -= 64) {
+        const double s = static_cast<double>(n) / longest;
+        const int sw = std::max(1, static_cast<int>(std::lround(w * s)));
+        const int sh = std::max(1, static_cast<int>(std::lround(h * s)));
+        if (algo.estimate_vram(sw, sh, p, opts) <= available) return n;
+    }
+    return 0;
+}
+
 std::string vram_preflight(const IStyleAlgorithm& algo, int w, int h, const Params& p, const RunOptions& opts)
 {
     std::string backend;
@@ -404,15 +471,7 @@ std::string vram_preflight(const IStyleAlgorithm& algo, int w, int h, const Para
     const uint64_t avail = gpu.available();
     if (need <= avail) return {};
 
-    // Suggest the largest longer side that fits (activations scale with area).
-    const int longest = std::max(w, h);
-    int suggest = 0;
-    for (int n = (longest / 64) * 64 - 64; n >= 256; n -= 64) {
-        const double s = static_cast<double>(n) / longest;
-        const int sw = std::max(1, static_cast<int>(std::lround(w * s)));
-        const int sh = std::max(1, static_cast<int>(std::lround(h * s)));
-        if (algo.estimate_vram(sw, sh, p, opts) <= avail) { suggest = n; break; }
-    }
+    const int suggest = vram_suggest_size(algo, w, h, p, opts, avail);
     std::string msg = "not enough GPU memory on " + gpu.adapter + ": " + algo.id() + " needs about " + human_size(need) +
                       " for " + std::to_string(w) + "x" + std::to_string(h) + ", " + human_size(avail) + " is free (of " +
                       human_size(gpu.budget) + " budget).";
