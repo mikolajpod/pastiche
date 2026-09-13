@@ -12,6 +12,9 @@
 #include "core/sidecar.hpp"
 #include "selftest.hpp"
 #include "version.hpp"
+#ifdef HAVE_SD
+#include "backends/sd_session.hpp"
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -87,6 +90,35 @@ void list_algos()
         std::unique_ptr<IStyleAlgorithm> a = Registry::instance().create(id);
         std::printf("%-14s %s\n", id.c_str(), a->description().c_str());
     }
+}
+
+// --version doubles as the backend report: there are no GUI tests and the CLI
+// has to be enough to see what the build can actually do (D12). Verbose adds
+// the full ggml device list, which is what --device accepts.
+void print_version(bool verbose)
+{
+    std::printf("pastiche %s\n", PASTICHE_VERSION);
+#ifdef HAVE_SD
+    sd_set_logging(verbose);
+    SdRuntime& sd = SdRuntime::instance();
+    if (sd.available()) {
+        std::printf("diffusion: stable-diffusion.cpp %s\n", sd.version().c_str());
+        std::printf("           %s\n", sd.library_path().c_str());
+        const std::string preferred = sd.preferred_device();
+        for (const SdDevice& d : sd.devices()) {
+            const bool is_preferred = d.name == preferred;
+            if (verbose || is_preferred) {
+                std::printf("           %-10s %s%s\n", d.name.c_str(), d.description.c_str(),
+                            is_preferred ? "  (default)" : "");
+            }
+        }
+    } else {
+        std::printf("diffusion: unavailable\n");
+        if (verbose) std::printf("           %s\n", sd.error().c_str());
+    }
+#else
+    std::printf("diffusion: not built (stable-diffusion.h missing at configure time)\n");
+#endif
 }
 
 class ConsoleProgress final : public Progress {
@@ -192,7 +224,7 @@ int run_cli(const std::vector<std::string>& args)
     opts.threads = cli.threads;
     opts.verbose = cli.verbose;
 
-    if (cli.version) { std::printf("pastiche %s\n", PASTICHE_VERSION); return EX_OK; }
+    if (cli.version) { print_version(cli.verbose); return EX_OK; }
     if (cli.list) { list_algos(); return EX_OK; }
     if (cli.help) {
         if (cli.positional.empty()) { print_usage(stdout); return EX_OK; }

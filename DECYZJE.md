@@ -4,8 +4,12 @@ Data rozpoczęcia: 2026-09-12
 
 ## Ustalenia o środowisku
 
-- Laptop: Quadro T2000 4 GiB (Turing, compute 7.5, tensor cores, FP16),
-  driver 580.92, i9-9980HK, 64 GB RAM. Docelowo też RTX 3060 12 GiB.
+- Laptop: Quadro T2000 4 GiB (Turing TU117GLM, PCI 10DE:1FB8, compute 7.5,
+  **bez rdzeni tensor**, za to dedykowane jednostki FP16 o podwójnej
+  przepustowości względem FP32), driver 580.92, i9-9980HK, 64 GB RAM.
+  Docelowo też RTX 3060 12 GiB (GA106, rdzenie tensor obecne).
+  Uwaga: pierwotny zapis mówił o rdzeniach tensor w T2000 - to był błąd,
+  sprostowany w D20. TU117 to wariant Turinga pozbawiony rdzeni RT i tensor.
 - Toolchain jak w fractal-xplorer: MSYS2 MinGW GCC 15.2, CMake 4.2, Ninja.
   Brak MSVC, brak CUDA Toolkit, brak Qt. To ma pozostać (bez MSVC).
 
@@ -262,3 +266,136 @@ Data rozpoczęcia: 2026-09-12
   w etapie 5, razem z pierwszymi modelami wymagającymi pobrania (SD 1.5,
   IP-Adapter z Hugging Face) i z ekranem akceptacji licencji OpenRAIL-M.
   Na Windowsie WinHTTP (bez nowej zależności), na Linuxie libcurl.
+
+## D20. stable-diffusion.cpp + Vulkan pod MinGW: sonda potwierdzona (2026-09-13)
+
+Pierwszy krok etapu 5 miał odpowiedzieć, czy D2 (dyfuzja na Vulkanie) w ogóle
+się utrzyma, bo D2 nie ma wariantu zapasowego. Odpowiedź: **tak, buduje się
+i liczy poprawnie**.
+
+Zweryfikowane:
+
+- Doinstalowane z MSYS2: `mingw-w64-x86_64-shaderc` 2026.3,
+  `mingw-w64-x86_64-glslang` 16.3.0, `mingw-w64-x86_64-spirv-tools`
+  oraz `mingw-w64-x86_64-spirv-headers`. Ten ostatni nie był w pierwotnym
+  planie, a bez niego `ggml-vulkan` nie przechodzi configure
+  (`Could not find SPIRV-HeadersConfig.cmake`). Vulkan headers i loader
+  (1.4.335) były już obecne z czasów D2.
+- Wersje sondy: sd.cpp `master-859-7f410a3`, ggml `e20c3a14`, GCC 15.2,
+  CMake 4.2.1, Ninja. Klon w `third_party/sdcpp-probe/` (katalog ignorowany).
+- Build statyczny `-DSD_VULKAN=ON -DSD_WEBP=OFF -DSD_WEBM=OFF`: exit 0, zero
+  błędów, 9 ostrzeżeń, wszystkie nieszkodliwe (redefinicja `NOMINMAX`,
+  `std::wstring_convert` deprecated, dwa fałszywie dodatnie
+  `-Wstringop-overflow` w stb_image i `stl_uninitialized.h`).
+- Build wariantu shared (`SD_BUILD_SHARED_LIBS=ON`, `GGML_NATIVE=OFF`,
+  bez examples): też exit 0, `libstable-diffusion.dll` 106,8 MB.
+- Runtime: `sd-cli.exe --list-devices` wykrywa `Vulkan0` = Intel UHD 630,
+  `Vulkan1` = Quadro T2000, `CPU` = i9-9980HK.
+- Poprawność liczenia na GPU: `test-backend-ops` z ggml uruchomiony na
+  `Vulkan1` daje **16617/16617 tests passed, 0 FAIL** (3872 przypadki
+  zgłoszone jako "not supported" to typy nieobsługiwane przez ten backend,
+  m.in. część kwantyzacji i `LIGHTNING_INDEXER`; test je pomija, to nie są
+  porażki). To jest dla dyfuzji odpowiednik tego, czym `--selftest` jest dla
+  ścieżki ORT: realne porównanie GPU z referencją CPU op po opie.
+
+Ustalenia o środowisku, które wyszły przy okazji:
+
+- Klucza `HKLM\SOFTWARE\Khronos\Vulkan\Drivers` na tym laptopie **nie ma**.
+  To nie znaczy braku Vulkana: oba sterowniki rejestrują ICD nowszą metodą,
+  przez `VulkanDriverName` w kluczu adaptera PnP
+  (`...\Control\Class\{4d36e968-...}\0000` i `\0001`). Loader je znajduje.
+  Nie diagnozować Vulkana po starym kluczu rejestru.
+- Zależności DLL `sd-cli.exe`: tylko runtime MinGW (`libgcc_s_seh-1`,
+  `libstdc++-6`, `libwinpthread-1`, `libgomp-1`) plus `vulkan-1.dll`, która
+  jest częścią Windows. **Żadnego redistributable do dołożenia do paczki** -
+  inaczej niż przy ONNX Runtime. `libgomp-1.dll` jest nowa względem etapów
+  2-4, ale `package.sh` liczy zależności przez `ldd`, więc dołoży ją sama.
+- ggml raportuje dla Quadro T2000 `matrix cores: none`. **To poprawny odczyt
+  sprzętu, nie usterka.** Rozstrzygnięte sondą `third_party/vkprobe/`:
+  sterownik NVIDIA 580.92 wystawia dla tej karty 228 rozszerzeń i nie ma
+  wśród nich ani `VK_KHR_cooperative_matrix`, ani `VK_NV_cooperative_matrix`.
+  Powód jest sprzętowy: Quadro T2000 Mobile to TU117GLM (PCI 10DE:1FB8),
+  a TU117 - jak TU116 w GTX 1660 i jak GTX 1650 - jest wariantem Turinga
+  **bez rdzeni tensor i RT**. NVIDIA zastąpiła w nim rdzenie tensor 128
+  dedykowanymi jednostkami FP16 na SM, dającymi FP16 z podwójną
+  przepustowością względem FP32. Nie ma więc czego wystawiać przez coopmat.
+  Wykluczone po drodze: ggml nie blokuje NVIDII
+  (`ggml_vk_khr_cooperative_matrix_support` ma dla niej `default: return
+  true`; czarne listy dotyczą tylko starszych Intelów i AMD poza RDNA3),
+  a glslc wspiera `GL_KHR_cooperative_matrix`, więc build nie jest okrojony.
+- Wniosek dla wydajności: **szacunek "70-90 % wydajności CUDA" z D2 stoi.**
+  Na TU117 CUDA też nie ma dostępu do rdzeni tensor, więc brak coopmat nie
+  poszerza przepaści między Vulkanem a CUDA - obie ścieżki liczą na zwykłych
+  jednostkach, z przyspieszeniem FP16 2x, które ggml wykrywa (`fp16: 1`).
+  Na RTX 3060 (GA106, rdzenie tensor obecne) spodziewamy się
+  `matrix cores: KHR_coopmat` i realnego przyspieszenia matmul - do
+  potwierdzenia, gdy karta będzie pod ręką.
+
+Rozstrzygnięcia dla reszty etapu 5:
+
+1. **sd.cpp jako `stable-diffusion.dll` ładowana w locie, pakiet opcjonalny.**
+   Shadery SPIR-V są wkompilowane w binarkę: `sd-cli.exe` ma 103 MB po strip,
+   `libstable-diffusion.dll` 106,8 MB. Statyczne linkowanie do obu exe dałoby
+   ~200 MB w ZIP-ie, więc odpada. Wybrany wariant to ten sam mechanizm co przy
+   ONNX Runtime (D16): `LoadLibraryEx`, kolejność szukania
+   `PASTICHE_SD_DIR`, katalog exe, ścieżka `third_party` z czasu kompilacji,
+   `PATH`. Bazowe wydanie zostaje małe, a DLL jest osobnym pakietem obok wag
+   SD 1.5, bo i tak nikt nie użyje dyfuzji bez pobrania 2 GB modelu. Gdy DLL
+   nie ma, algorytm dyfuzyjny nie pojawia się w `--list-algos`, a próba użycia
+   daje czytelny błąd - tak jak dziś Johnson bez ORT.
+2. **Wybór urządzenia jawny.** Domyślnie pierwsze urządzenie to iGPU Intela,
+   nie Quadro. Potrzebny wybór dyskretnej karty, odpowiednik filtra
+   `HighPerformance` z DirectML, plus parametr do nadpisania. Nazwy urządzeń
+   bierzemy z tego samego API, co `sd-cli --list-devices`.
+3. **GGML_NATIVE=OFF w wydaniu.** Domyślnie ggml kompiluje CPU backend
+   z `-march=native`, co dałoby paczkę działającą tylko na maszynach
+   podobnych do budującej.
+4. **FetchContent z przypiętym commitem**, zgodnie z D10. sd.cpp ma własne
+   submoduły (ggml, libwebp, libwebm, frontend servera), więc trzeba wyłączyć
+   examples, servera i duplikat libwebp - swoje libwebp mamy z MSYS2 (D6).
+   (Zmienione w D21 na build poza drzewem - patrz niżej.)
+
+## D21. sd.cpp budowana poza drzewem, nie przez FetchContent (2026-09-13)
+
+Punkt 4 z D20 mówił "FetchContent z przypiętym commitem", zgodnie z listą
+zależności w D10. Przy wpinaniu okazało się to złym wyborem i zostaje
+zmienione: `stable-diffusion.cpp` jest budowana **poza drzewem projektu**
+skryptem `tools/build_sdcpp.sh`, który zostawia gotowce w
+`third_party/stable-diffusion/{include,bin}`. Główny `CMakeLists.txt` widzi
+z tego wyłącznie nagłówek `stable-diffusion.h`; DLL nigdy nie jest linkowana,
+tylko ładowana w locie (D20 pkt 1).
+
+Powody:
+
+- **Kolizja libwebp.** sd.cpp wciąga libwebp i libwebm jako własne submoduły.
+  Wstawienie tego przez `add_subdirectory` wprowadziłoby do naszego drzewa
+  drugie libwebp obok tego z MSYS2, którego używamy od D6. Trzymanie sd.cpp
+  poza drzewem znosi problem w całości, zamiast go obchodzić flagami.
+- **Czas builda.** Kompilacja shaderów Vulkana to ok. 370 celów i kilka minut.
+  `cmake --build build` ma zostać szybkie; DLL zmienia się raz na kilka
+  miesięcy, przy podbiciu wersji sd.cpp.
+- **Spójność z ORT.** Po decyzji z D20 pkt 1 sd.cpp jest strukturalnie tym
+  samym co ONNX Runtime: obcą biblioteką ładowaną w locie, z nagłówkami
+  w `third_party/` i binariami spoza repozytorium (D15, D16). Niech więc
+  będzie obsługiwana tak samo, zamiast trzecim mechanizmem.
+- Przypięcie wersji nie ucieka: commit sd.cpp jest zapisany w skrypcie,
+  w jednym miejscu, tak jak tagi ImGui i nfd są w `CMakeLists.txt`.
+
+Gdy nagłówka nie ma, configure nie pada - wypisuje, że dyfuzja jest wyłączona
+i jak ją włączyć, a algorytm dyfuzyjny nie trafia do builda. To ta sama
+uprzejmość, co przy braku libjxl (D6).
+
+Wnioski z lektury `include/stable-diffusion.h`, które upraszczają resztę etapu:
+
+- `sd_list_devices()` zwraca `nazwa<TAB>opis` po jednej linii na urządzenie -
+  dokładnie to, czego potrzebuje wybór dyskretnego GPU z D20 pkt 2. Nazwy
+  (`vulkan0`, `vulkan1`, `cpu`) idą wprost do pola `backend`
+  w `sd_ctx_params_t`.
+- `sd_cancel_generation()` istnieje, więc anulowanie dyfuzji **nie potrzebuje
+  wątku-strażnika** z D18. Tamten obchodził brak możliwości przerwania
+  pojedynczego `Run()` w ORT; sd.cpp przerywa się sam między krokami.
+- `sd_set_preview_callback(cb, mode, interval, ...)` daje podgląd pośredni
+  z D9 gotowy, bez dłubania w pętli samplera.
+- `sd_ctx_params_t.max_vram` przyjmuje budżet w GiB per urządzenie. To nie
+  zastępuje preflightu z D5 - nadal liczymy estymację i odmawiamy przed
+  załadowaniem modelu - ale jest drugą linią obrony.

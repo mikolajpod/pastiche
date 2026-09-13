@@ -30,6 +30,21 @@ if(NOT EXISTS "${PASTICHE_ORT_DIR}/include/onnxruntime_c_api.h")
     message(FATAL_ERROR "onnxruntime_c_api.h not found under ${PASTICHE_ORT_DIR}/include - see README.md")
 endif()
 
+# --- stable-diffusion.cpp: headers only. The DLL is built out of tree by
+# tools/build_sdcpp.sh and loaded at run time, never linked (D20, D21).
+# Missing headers disable diffusion instead of failing the build, the same way
+# a missing libjxl disables JPEG XL.
+set(PASTICHE_SD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion" CACHE PATH
+    "Directory with stable-diffusion.cpp include/ and bin/ (see tools/build_sdcpp.sh)")
+if(EXISTS "${PASTICHE_SD_DIR}/include/stable-diffusion.h")
+    set(PASTICHE_HAVE_SD ON)
+    message(STATUS "Diffusion support enabled (headers from ${PASTICHE_SD_DIR}/include)")
+else()
+    set(PASTICHE_HAVE_SD OFF)
+    message(STATUS "Diffusion support disabled: stable-diffusion.h not found under "
+                   "${PASTICHE_SD_DIR}/include - run tools/build_sdcpp.sh to enable it")
+endif()
+
 # --- pastiche-core: image I/O, EXIF, parameters, algorithm registry, ORT backend
 add_library(pastiche-core STATIC
     src/core/image.cpp
@@ -49,6 +64,13 @@ target_include_directories(pastiche-core PUBLIC
     ${PASTICHE_ORT_DIR}/include
 )
 target_compile_definitions(pastiche-core PRIVATE PASTICHE_ORT_DIR="${PASTICHE_ORT_DIR}/bin")
+
+if(PASTICHE_HAVE_SD)
+    target_sources(pastiche-core PRIVATE src/backends/sd_session.cpp)
+    target_include_directories(pastiche-core PUBLIC ${PASTICHE_SD_DIR}/include)
+    target_compile_definitions(pastiche-core PUBLIC HAVE_SD)
+    target_compile_definitions(pastiche-core PRIVATE PASTICHE_SD_DIR="${PASTICHE_SD_DIR}/bin")
+endif()
 target_link_libraries(pastiche-core PUBLIC PNG::PNG JPEG::JPEG PkgConfig::WEBP)
 target_compile_options(pastiche-core PUBLIC -Wall -Wextra)
 if(WIN32)
@@ -94,6 +116,19 @@ if(WIN32 AND EXISTS "${PASTICHE_ORT_DIR}/bin/onnxruntime.dll")
     add_custom_command(TARGET pastiche POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PASTICHE_RUNTIME_DLLS} $<TARGET_FILE_DIR:pastiche>
         COMMENT "Copying ONNX Runtime DLLs next to pastiche.exe")
+endif()
+
+# Same convenience for the diffusion DLL. In a release it is a separate
+# download (D20), but during development it belongs next to the executables.
+if(WIN32 AND PASTICHE_HAVE_SD)
+    foreach(dll libstable-diffusion.dll stable-diffusion.dll)
+        if(EXISTS "${PASTICHE_SD_DIR}/bin/${dll}")
+            add_custom_command(TARGET pastiche POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PASTICHE_SD_DIR}/bin/${dll}" $<TARGET_FILE_DIR:pastiche>
+                COMMENT "Copying ${dll} next to pastiche.exe")
+        endif()
+    endforeach()
 endif()
 
 # --- pastiche-gui: Dear ImGui + SDL2 + OpenGL 3.3, native file dialogs
