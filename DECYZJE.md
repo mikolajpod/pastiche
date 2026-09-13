@@ -446,3 +446,83 @@ nic z tego nie wchodzi do wydania.
 - Licencja nieprzemisywna: streszczenie zawijane do 74 kolumn, link do pełnego
   tekstu, zastrzeżenie że to streszczenie, i pytanie z domyślną odpowiedzią
   NIE. `--yes` dla instalacji skryptowej.
+
+## D23. Precyzja wag: domyślnie f16, nie q8_0. I dlaczego selftest z D12 nie zadziała dla dyfuzji (2026-09-13)
+
+D7 zakładał "na 4 GB: SD 1.5 w Q8". Pomiar to podważa - **na T2000 lepszy jest
+f16** - a przy okazji wyszła rzecz poważniejsza, dotycząca sposobu testowania.
+
+### Pomiar
+
+Ten sam prompt, ziarno 42, 512 px, 8 kroków, `sd-cli` z sondy.
+
+| wariant | wagi | czas |
+|---|---|---|
+| Vulkan f16 | 2111 MB | **24,9 s** |
+| Vulkan q8_0 | ok. 1300 MB | 29,6 s |
+| CPU f32 | 2784 MB RAM | 176 s |
+| CPU f16 | 2111 MB RAM | 172 s |
+| CPU q8_0 | 1796 MB RAM | 166 s |
+
+**f16 jest na tej karcie szybszy od q8_0 mimo większego zużycia pamięci.**
+Spójne z D20: TU117 nie ma rdzeni tensor, ale ma dedykowane jednostki FP16
+o podwójnej przepustowości względem FP32. q8_0 musi dodatkowo dekwantyzować
+przed każdym mnożeniem i to zjada zysk z mniejszego transferu.
+
+Odległość od pełnej precyzji (procesor, ten sam backend, więc izolowany wpływ
+samej precyzji), miarą z `tools/compare_images.py`:
+
+| porównanie | średnia różnica | PSNR |
+|---|---|---|
+| CPU f16 vs CPU f32 | 0,46/255 | 43,3 dB |
+| CPU q8_0 vs CPU f32 | 6,72/255 | 25,9 dB |
+
+f16 trzyma się referencji o rząd wielkości bliżej. Zgodne z matematyką z D22:
+w q8_0 błąd jest odniesiony do maksimum 32-elementowego bloku, więc mała waga
+obok dużej cierpi nieproporcjonalnie; w f16 każda liczba ma własną precyzję
+rzędu 0,05 % swojej wartości, bez efektu sąsiedztwa.
+
+### Wniosek, który wywraca plan testów z D12
+
+**Te liczby NIE są miarą jakości.** Dowód jest w samych pomiarach:
+
+| porównanie | średnia różnica | PSNR |
+|---|---|---|
+| Vulkan f16 vs CPU f16 | 9,23/255 | 23,8 dB |
+
+To jest **ta sama precyzja na dwóch backendach** i różnica wychodzi *większa*
+niż między f32 a q8_0. Oglądnięcie obrazów potwierdza: wszystkie trzy są
+równie dobre, ten sam samochód, ta sama kompozycja, różnią się kształtem gór
+w tle i detalami. Żaden nie jest gorszy - są to różne, równie poprawne próbki.
+
+Powód jest wpisany w metodę: sampling dyfuzyjny jest iteracyjny i chaotyczny,
+więc różnica daleko poniżej precyzji wag wystarczy, żeby po kilku krokach
+tor pobiegł do innego obrazu.
+
+Stąd twarda konsekwencja dla etapu 5:
+
+- **`--selftest` dla dyfuzji nie może porównywać pikseli z referencją CPU
+  z tolerancją, tak jak robi to dla Johnsona i AdaIN** (D12: "suma kontrolna
+  vs referencja CPU EP z tolerancją", dziś mean diff 0.00 przy progu 2.0).
+  Dla dyfuzji taki test failowałby zawsze, a jego zaostrzanie byłoby gonieniem
+  wiatru.
+- Zamiast tego: rozmiar, brak NaN, obraz nie jest czarny ani jednolity,
+  wartości w zakresie, i - to ma sens - że wynik *nie jest* identyczny
+  z wejściem, bo to wykryłoby pipeline, który tylko przepisuje treść.
+- Porównanie z referencją zostaje jako narzędzie diagnostyczne
+  (`tools/compare_images.py`), nie jako test przechodzi/nie przechodzi.
+
+### Decyzja
+
+- **Domyślna precyzja dyfuzji: f16.** Szybsza na T2000, bliższa referencji,
+  mieści się przy 512 px.
+- **q8_0 jako zejście awaryjne, nie domyślne.** 2111 MB wag przy realnie
+  ok. 3300 MB wolnych zostawia mało miejsca: przy obu wariantach dekodowanie
+  VAE nie zmieściło się i silnik sam przeszedł na kafelkowanie przestrzenne.
+  Powyżej 512 px f16 przestanie się mieścić i wtedy q8_0 wraca.
+- Precyzja idzie jako parametr algorytmu (ParamSpec, D4), a preflight z D5
+  liczy estymację osobno dla każdego wariantu i przy odmowie sugeruje zejście
+  na q8_0 zanim zaproponuje zmniejszenie rozdzielczości.
+- Zastrzeżenie: to jeden prompt i jedno ziarno przy 8 krokach. Ranking
+  szybkości i odległości od referencji jest wyraźny i zgodny z teorią, ale
+  gdyby kiedyś zależało od tego coś kosztownego, trzeba powtórzyć na serii.

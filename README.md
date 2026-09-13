@@ -26,11 +26,16 @@ supported). Nothing is rescaled silently.
 ```
 pastiche <content> <style> <out> <algo> [-p key=value ...] [--size N] [--tile]
          [--backend cpu|dml|cuda] [--models-dir D] [--threads N] [-v]
+pastiche download [--list | --verify | <model>...] [--models-dir D] [--yes]
 pastiche --list-algos
 pastiche --help [algo]
 pastiche --selftest
 pastiche --benchmark
+pastiche --version [-v]
 ```
+
+`--version -v` doubles as the backend report: which runtimes were found, and
+which GPU the diffusion backend will use by default.
 
 Input formats: JPEG (EXIF orientation applied), PNG, WebP, and JPEG XL when
 built with libjxl. Output: PNG (or lossless JPEG XL with `.jxl`). Next to the
@@ -109,9 +114,27 @@ is how GUI changes are checked:
 
 ## Models
 
-Only permissively licensed weights ship with the release (`models/`). Others
-are downloaded on demand (`pastiche download <name>`, planned) with their
-licence shown first.
+Only permissively licensed weights ship with the release (`models/`). Everything
+else is downloaded on demand, with the licence shown and confirmed first where
+the terms are not plainly permissive:
+
+```
+pastiche download --list            what exists and what is already here
+pastiche download sd15              asks you to accept CreativeML OpenRAIL-M
+pastiche download --verify          re-check the checksums of what you have
+```
+
+The catalogue lives in `models.json`: URL, SHA-256 and licence per file.
+Downloads go to `<file>.part` and are renamed only once complete, so an
+interrupted transfer resumes instead of masquerading as a finished one, and
+every file is checked against its SHA-256 before it is accepted.
+
+The checksums are the Hugging Face LFS object ids, which are the SHA-256 of the
+file contents, so bumping a model version does not require downloading it:
+
+```
+curl -s 'https://huggingface.co/api/models/<repo>/tree/main?recursive=1' | jq '.[] | {path, lfs}'
+```
 
 The bundled ONNX files are produced by the scripts in `tools/` (Python 3 with
 `numpy` and `onnx`; no PyTorch needed):
