@@ -30,8 +30,14 @@ std::string save_image(const std::string& path, const Image& img);
 
 bool jxl_available();
 
-// "png, jpeg, webp, jxl" etc. for --help / GUI dialogs.
+// "JPEG, PNG, WebP" etc. for --help messages.
 std::string supported_input_formats();
 std::string supported_output_formats();
+
+// Comma-separated extensions for a file dialog filter, e.g.
+// "jpg,jpeg,jfif,png,webp". Decoding itself goes by the file content, so this
+// list only decides what the picker shows by default; keep it in step with
+// detect_format().
+std::string supported_input_extensions();
 
 } // namespace pastiche

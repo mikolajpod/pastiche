@@ -336,4 +336,13 @@ std::string supported_output_formats()
     return jxl_available() ? ".png, .jxl" : ".png";
 }
 
+std::string supported_input_extensions()
+{
+    // jfif/jfi/jpe/jif are all plain JPEG; Windows browsers in particular like
+    // to save downloads as .jfif.
+    std::string ext = "jpg,jpeg,jfif,jfi,jpe,jif,png,webp";
+    if (jxl_available()) ext += ",jxl";
+    return ext;
+}
+
 } // namespace pastiche

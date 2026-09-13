@@ -372,7 +372,8 @@ void poll_worker(App& app)
 bool pick_image(std::string& out)
 {
     nfdu8char_t* path = nullptr;
-    nfdu8filteritem_t filters[] = {{"Images", jxl_available() ? "jpg,jpeg,png,webp,jxl" : "jpg,jpeg,png,webp"}};
+    const std::string ext = supported_input_extensions();
+    nfdu8filteritem_t filters[] = {{"Images", ext.c_str()}};
     const nfdresult_t r = NFD_OpenDialogU8(&path, filters, 1, nullptr);
     if (r != NFD_OKAY) return false;
     out = path;
