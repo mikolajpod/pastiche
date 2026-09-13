@@ -10,6 +10,7 @@
 #include "core/fs.hpp"
 #include "core/image_io.hpp"
 #include "core/sidecar.hpp"
+#include "download.hpp"
 #include "selftest.hpp"
 #include "version.hpp"
 #ifdef HAVE_SD
@@ -36,6 +37,7 @@ void print_usage(FILE* f)
         "\n"
         "Usage:\n"
         "  pastiche <content> <style> <out> <algo> [options]\n"
+        "  pastiche download [--list | --verify | <model>...]\n"
         "  pastiche --list-algos\n"
         "  pastiche --help [algo]\n"
         "  pastiche --selftest [--backend X] [--models-dir D]\n"
@@ -211,6 +213,21 @@ Cli parse_cli(const std::vector<std::string>& args)
 
 int run_cli(const std::vector<std::string>& args)
 {
+    // `download` is a subcommand with options of its own (--list, --verify)
+    // that the main parser would reject as unknown, so it is dispatched before
+    // parse_cli runs. Only the two flags it shares are pulled out here.
+    if (args.size() > 1 && args[1] == "download") {
+        std::vector<std::string> sub;
+        std::string models_dir;
+        bool assume_yes = false;
+        for (size_t i = 2; i < args.size(); ++i) {
+            if (args[i] == "--models-dir" && i + 1 < args.size()) models_dir = args[++i];
+            else if (args[i] == "--yes") assume_yes = true;
+            else sub.push_back(args[i]);
+        }
+        return run_download(sub, resolve_models_dir(models_dir), assume_yes);
+    }
+
     Cli cli = parse_cli(args);
     if (!cli.error.empty()) {
         std::fprintf(stderr, "error: %s\n\n", cli.error.c_str());

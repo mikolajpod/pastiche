@@ -1,0 +1,63 @@
+{
+  "comment": [
+    "Catalogue of models that are not shipped in the release (D8). Everything",
+    "permissively licensed is already in models/; what is listed here either is",
+    "too large to ship or carries a licence the user has to accept first.",
+    "",
+    "The sha256 values are the Hugging Face LFS object ids, which are the",
+    "SHA-256 of the file contents. They were read from the repository API, not",
+    "computed locally, so they can be regenerated without downloading anything:",
+    "  https://huggingface.co/api/models/<repo>/tree/main?recursive=1"
+  ],
+  "version": 1,
+  "models": [
+    {
+      "name": "sd15",
+      "description": "Stable Diffusion 1.5 base checkpoint, required by the diffusion algorithm",
+      "licence": "CreativeML OpenRAIL-M",
+      "licence_url": "https://huggingface.co/spaces/CompVis/stable-diffusion-license",
+      "licence_summary": "Open licence with use-based restrictions. You may use, redistribute and commercialise the model and its outputs, but you must not use it to break the law, to harm or exploit minors, to generate false information presented as fact, to defame or harass, or for automated decisions about an individual that damage their legal rights. The same restrictions must be passed on to anyone you share the weights with. The model is provided without warranty.",
+      "needs_acceptance": true,
+      "files": [
+        {
+          "path": "sd15/v1-5-pruned-emaonly.safetensors",
+          "url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+          "sha256": "6ce0161689b3853acaa03779ec93eafe75a02f4ced659bee03f50797806fa2fa",
+          "bytes": 4265146304
+        }
+      ]
+    },
+    {
+      "name": "ip-adapter-sd15",
+      "description": "IP-Adapter for SD 1.5: turns the style image into an image prompt (D7)",
+      "licence": "Apache-2.0",
+      "licence_url": "https://huggingface.co/h94/IP-Adapter",
+      "licence_summary": "Permissive. No acceptance step needed.",
+      "needs_acceptance": false,
+      "files": [
+        {
+          "path": "ip-adapter/ip-adapter_sd15.safetensors",
+          "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors",
+          "sha256": "289b45f16d043d0bf542e45831f971dcdaabe18b656f11e86d9dfba7e9ee3369",
+          "bytes": 44642768
+        }
+      ]
+    },
+    {
+      "name": "clip-vision",
+      "description": "CLIP ViT-H/14 image encoder, the vision tower IP-Adapter feeds the style image through",
+      "licence": "Apache-2.0",
+      "licence_url": "https://huggingface.co/h94/IP-Adapter",
+      "licence_summary": "Permissive. No acceptance step needed.",
+      "needs_acceptance": false,
+      "files": [
+        {
+          "path": "ip-adapter/image_encoder.safetensors",
+          "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors",
+          "sha256": "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030",
+          "bytes": 2528373448
+        }
+      ]
+    }
+  ]
+}

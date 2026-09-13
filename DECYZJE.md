@@ -399,3 +399,50 @@ Wnioski z lektury `include/stable-diffusion.h`, które upraszczają resztę etap
 - `sd_ctx_params_t.max_vram` przyjmuje budżet w GiB per urządzenie. To nie
   zastępuje preflightu z D5 - nadal liczymy estymację i odmawiamy przed
   załadowaniem modelu - ale jest drugą linią obrony.
+
+## D22. Downloader modeli: katalog, sumy z API, wznawianie (2026-09-13)
+
+D19 odłożył downloader, bo `models.json` nie miałby prawdziwych URL-i ani sum
+SHA-256. Oba problemy są rozwiązane, podkomenda `pastiche download` działa.
+
+**Sumy kontrolne bez pobierania czegokolwiek.** Hugging Face przechowuje duże
+pliki w Git LFS, a `lfs.oid` obiektu LFS **jest** sumą SHA-256 zawartości.
+Da się je wyciągnąć jednym zapytaniem:
+
+    https://huggingface.co/api/models/<repo>/tree/main?recursive=1
+
+Cały katalog został wypełniony tą drogą, bez ściągania 6,4 GB tylko po to, żeby
+policzyć hashe. Potwierdzone empirycznie: pobrany `ip-adapter_sd15.safetensors`
+ma dokładnie sumę, którą podało API. To także znaczy, że przy podbiciu wersji
+modelu nie trzeba niczego liczyć lokalnie.
+
+**Zakres modeli (D7):** `sd15` (v1-5-pruned-emaonly.safetensors, 4,0 GiB,
+OpenRAIL-M, wymaga akceptacji), `ip-adapter-sd15` (42,6 MiB, Apache 2.0),
+`clip-vision` (enkoder obrazu ViT-H/14, 2,4 GiB, Apache 2.0). Razem 6,4 GiB,
+nic z tego nie wchodzi do wydania.
+
+**Realizacja:**
+
+- Własne SHA-256 (`src/core/sha256.*`) zamiast CNG na Windows i OpenSSL gdzie
+  indziej - 150 linii kontra dwie zależności platformowe. Testy na wektorach
+  z FIPS 180-4, łącznie z milionem znaków `a` i granicami dopełnienia.
+- Własny parser JSON tylko do odczytu (`src/core/json.*`). Zapis JSON-a
+  projekt miał od dawna (sidecar, params), brakowało wyłącznie czytania.
+  Komunikaty błędów podają wiersz i kolumnę, bo ręcznie edytowany katalog
+  dostaje przecinek na końcu listy.
+- HTTP: WinHTTP na Windows (część systemu, nic do dołożenia do paczki),
+  libcurl na Linuxie przez `find_package(CURL)`; bez niej build przechodzi,
+  a pobieranie mówi, że jest niedostępne - zgodnie z "teoretycznym" Linuxem
+  z D10.
+- Transfer idzie do `<plik>.part` i jest przemianowywany dopiero po sukcesie,
+  więc przerwane pobranie nigdy nie wygląda jak skończone. Wznawianie przez
+  nagłówek `Range`; gdy serwer go zignoruje i odpowie 200 zamiast 206,
+  plik częściowy jest odrzucany, zamiast skleić dwie połówki w śmieć.
+  Sprawdzone podłożeniem 20 MiB jako `.part`: doklejone, suma się zgadza.
+- Walidacja katalogu przy wczytaniu, nie w trakcie pobierania: URL musi być
+  https, suma 64 znakami hex, rozmiar niezerowy, a ścieżka docelowa nie może
+  wyjść poza katalog modeli (`..` odrzucane - inaczej wpis w katalogu byłby
+  sposobem na nadpisanie dowolnego pliku).
+- Licencja nieprzemisywna: streszczenie zawijane do 74 kolumn, link do pełnego
+  tekstu, zastrzeżenie że to streszczenie, i pytanie z domyślną odpowiedzią
+  NIE. `--yes` dla instalacji skryptowej.

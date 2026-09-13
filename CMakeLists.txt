@@ -52,6 +52,10 @@ add_library(pastiche-core STATIC
     src/core/exif.cpp
     src/core/fs.cpp
     src/core/params.cpp
+    src/core/json.cpp
+    src/core/sha256.cpp
+    src/core/http.cpp
+    src/core/models.cpp
     src/core/algorithm.cpp
     src/core/gpu_info.cpp
     src/core/tiling.cpp
@@ -74,9 +78,19 @@ endif()
 target_link_libraries(pastiche-core PUBLIC PNG::PNG JPEG::JPEG PkgConfig::WEBP)
 target_compile_options(pastiche-core PUBLIC -Wall -Wextra)
 if(WIN32)
-    target_link_libraries(pastiche-core PUBLIC shell32 dxgi dxguid)
+    # winhttp: the model downloader (D19). Part of Windows, nothing to ship.
+    target_link_libraries(pastiche-core PUBLIC shell32 dxgi dxguid winhttp)
 else()
     target_link_libraries(pastiche-core PUBLIC ${CMAKE_DL_LIBS})
+    # libcurl is the Linux equivalent; without it downloads report that they
+    # are unavailable rather than failing to build (D10 keeps Linux best-effort).
+    find_package(CURL)
+    if(CURL_FOUND)
+        target_compile_definitions(pastiche-core PRIVATE HAVE_CURL)
+        target_link_libraries(pastiche-core PUBLIC CURL::libcurl)
+    else()
+        message(STATUS "libcurl not found - model downloads will be unavailable")
+    endif()
 endif()
 
 if(LIBJXL_FOUND)
@@ -99,6 +113,7 @@ target_link_libraries(pastiche-algos PUBLIC pastiche-core)
 # --- pastiche: command-line tool
 add_executable(pastiche
     src/main.cpp
+    src/download.cpp
     src/selftest.cpp
     $<TARGET_OBJECTS:pastiche-algos>
 )
@@ -208,6 +223,8 @@ if(PASTICHE_BUILD_TESTS)
         tests/test_exif.cpp
         tests/test_image.cpp
         tests/test_io.cpp
+        tests/test_json.cpp
+        tests/test_sha256.cpp
         $<TARGET_OBJECTS:pastiche-algos>
     )
     target_link_libraries(pastiche-tests PRIVATE pastiche-core doctest::doctest)
