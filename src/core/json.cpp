@@ -1,6 +1,7 @@
 #include "json.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace pastiche {
@@ -296,6 +297,97 @@ private:
     std::string& error_;
     std::size_t pos_ = 0;
 };
+
+namespace {
+
+void dump_string(const std::string& s, std::string& out)
+{
+    out += '"';
+    for (unsigned char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof buf, "\\u%04x", c);
+                out += buf;
+            } else {
+                out += static_cast<char>(c);  // UTF-8 passes through
+            }
+        }
+    }
+    out += '"';
+}
+
+void dump_number(double v, std::string& out)
+{
+    // Tensor offsets and shapes are integers and must not come back as 1.0 or,
+    // worse, 1e+09, which no safetensors reader would accept.
+    if (v == static_cast<double>(static_cast<int64_t>(v))) {
+        out += std::to_string(static_cast<int64_t>(v));
+        return;
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.17g", v);
+    out += buf;
+}
+
+void dump_value(const JsonValue& value, std::string& out)
+{
+    switch (value.type()) {
+    case JsonValue::Type::Null:
+        out += "null";
+        break;
+    case JsonValue::Type::Bool:
+        out += value.as_bool() ? "true" : "false";
+        break;
+    case JsonValue::Type::Number:
+        dump_number(value.as_number(), out);
+        break;
+    case JsonValue::Type::String:
+        dump_string(value.as_string(), out);
+        break;
+    case JsonValue::Type::Array: {
+        out += '[';
+        bool first = true;
+        for (const JsonValue& item : value.items()) {
+            if (!first) out += ',';
+            first = false;
+            dump_value(item, out);
+        }
+        out += ']';
+        break;
+    }
+    case JsonValue::Type::Object: {
+        out += '{';
+        bool first = true;
+        for (const auto& member : value.members()) {
+            if (!first) out += ',';
+            first = false;
+            dump_string(member.first, out);
+            out += ':';
+            dump_value(member.second, out);
+        }
+        out += '}';
+        break;
+    }
+    }
+}
+
+} // namespace
+
+std::string json_dump(const JsonValue& value)
+{
+    std::string out;
+    dump_value(value, out);
+    return out;
+}
 
 JsonValue json_parse(const std::string& text, std::string& error)
 {

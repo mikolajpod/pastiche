@@ -9,11 +9,28 @@
 
 namespace pastiche {
 
+// Work a file needs after downloading before anything can use it. Only one
+// operation exists, and it is a workaround for an upstream bug rather than a
+// general facility; see D24 and safetensors.hpp.
+struct PostProcess {
+    std::string op;                   // "" = nothing to do; "prefix_tensors"
+    std::string prefix;
+    std::string output;               // relative to the models directory
+    std::vector<std::string> drop;    // tensor names to leave out
+
+    bool empty() const { return op.empty(); }
+};
+
 struct ModelFile {
     std::string path;    // relative to the models directory
     std::string url;
     std::string sha256;  // lowercase hex
     uint64_t bytes = 0;
+    PostProcess post;
+
+    // What the algorithms actually open: the post-processed file when there is
+    // one, otherwise the download itself.
+    const std::string& usable_path() const { return post.empty() ? path : post.output; }
 };
 
 struct ModelEntry {

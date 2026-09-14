@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <type_traits>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -259,7 +260,44 @@ SdRuntime::SdRuntime()
         return;
     }
 
+    // All or nothing: a partially resolved API would fail later, deep inside a
+    // run, instead of here where the message can name the symbol.
+    const std::string missing = resolve_api();
+    if (!missing.empty()) {
+        error_ = library_path_ + " does not export " + missing +
+                 " - it was probably built from a different version than the header in "
+                 "third_party/stable-diffusion/include (rebuild with tools/build_sdcpp.sh)";
+        close_library(handle_);
+        handle_ = nullptr;
+        return;
+    }
+
     query_devices();
+}
+
+std::string SdRuntime::resolve_api()
+{
+    // Local helper: resolve into `slot`, remembering the first failure.
+    std::string missing;
+    auto bind = [&](auto& slot, const char* name) {
+        void* sym = find_symbol(handle_, name);
+        if (!sym && missing.empty()) missing = name;
+        slot = reinterpret_cast<typename std::remove_reference<decltype(slot)>::type>(sym);
+    };
+
+    bind(api_.ctx_params_init, "sd_ctx_params_init");
+    bind(api_.new_ctx, "new_sd_ctx");
+    bind(api_.free_ctx, "free_sd_ctx");
+    bind(api_.img_gen_params_init, "sd_img_gen_params_init");
+    bind(api_.generate_image, "generate_image");
+    bind(api_.free_images, "free_sd_images");
+    bind(api_.set_progress_callback, "sd_set_progress_callback");
+    bind(api_.set_preview_callback, "sd_set_preview_callback");
+    bind(api_.cancel_generation, "sd_cancel_generation");
+    bind(api_.str_to_type, "str_to_sd_type");
+    bind(api_.type_name, "sd_type_name");
+
+    return missing;
 }
 
 SdRuntime::~SdRuntime()
@@ -328,13 +366,31 @@ std::string SdRuntime::preferred_device() const
 {
     if (devices_.empty()) return {};
 
-    const GpuMemoryInfo gpu = query_gpu_memory();
-    if (gpu.ok && !gpu.adapter.empty()) {
+    // Which adapter to use is a question about identity, not about how much is
+    // free right now, so enumerate adapters rather than going through the live
+    // memory query: one fewer thing that can fail and send us to the iGPU.
+    //
+    // Note that ggml numbers its Vulkan devices in enumeration order and that
+    // order is not stable - Vulkan0 is the discrete card in one process and the
+    // integrated one in the next, and the DXGI adapter list reorders the same
+    // way. Matching on the description rather than the index is what makes this
+    // correct; never assume device 0 is anything in particular.
+    std::string target;
+    uint64_t best_memory = 0;
+    for (const GpuAdapterInfo& adapter : list_gpu_adapters()) {
+        if (adapter.software) continue;
+        if (adapter.dedicated_total > best_memory) {
+            best_memory = adapter.dedicated_total;
+            target = adapter.name;
+        }
+    }
+
+    if (!target.empty()) {
         const SdDevice* best = nullptr;
         int best_score = 0;
         for (const SdDevice& d : devices_) {
             if (d.is_cpu) continue;
-            const int score = match_score(gpu.adapter, d.description);
+            const int score = match_score(target, d.description);
             if (score > best_score) {
                 best_score = score;
                 best = &d;

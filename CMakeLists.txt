@@ -55,6 +55,7 @@ add_library(pastiche-core STATIC
     src/core/json.cpp
     src/core/sha256.cpp
     src/core/http.cpp
+    src/core/safetensors.cpp
     src/core/models.cpp
     src/core/algorithm.cpp
     src/core/gpu_info.cpp
@@ -108,6 +109,9 @@ add_library(pastiche-algos OBJECT
     src/algos/johnson.cpp
     src/algos/adain.cpp
 )
+if(PASTICHE_HAVE_SD)
+    target_sources(pastiche-algos PRIVATE src/algos/sd_ipadapter.cpp)
+endif()
 target_link_libraries(pastiche-algos PUBLIC pastiche-core)
 
 # --- pastiche: command-line tool
@@ -225,6 +229,7 @@ if(PASTICHE_BUILD_TESTS)
         tests/test_io.cpp
         tests/test_json.cpp
         tests/test_sha256.cpp
+        tests/test_safetensors.cpp
         $<TARGET_OBJECTS:pastiche-algos>
     )
     target_link_libraries(pastiche-tests PRIVATE pastiche-core doctest::doctest)

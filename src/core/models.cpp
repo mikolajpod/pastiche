@@ -114,6 +114,26 @@ std::string load_catalogue(const std::string& path, ModelCatalogue& out)
             if (!is_hex64(file.sha256)) return where + ": \"sha256\" must be 64 hex characters";
             if (file.bytes == 0) return where + ": missing or zero \"bytes\"";
 
+            if (const JsonValue* post = f.find("postprocess")) {
+                if (!post->is_object()) return where + ": \"postprocess\" must be an object";
+                file.post.op = post->string_or("op");
+                file.post.prefix = post->string_or("prefix");
+                file.post.output = post->string_or("output");
+                if (const JsonValue* drop = post->find("drop")) {
+                    for (const JsonValue& d : drop->items()) {
+                        if (d.is_string()) file.post.drop.push_back(d.as_string());
+                    }
+                }
+                if (file.post.op != "prefix_tensors") {
+                    return where + ": unknown postprocess op '" + file.post.op + "'";
+                }
+                if (file.post.prefix.empty()) return where + ": postprocess needs a \"prefix\"";
+                if (file.post.output.empty()) return where + ": postprocess needs an \"output\"";
+                if (!is_safe_relative_path(file.post.output)) {
+                    return where + ": postprocess output must stay inside the models directory";
+                }
+            }
+
             entry.files.push_back(std::move(file));
         }
 
@@ -146,9 +166,14 @@ ModelStatus model_status(const ModelEntry& entry, const std::string& models_dir)
     bool partial = false;
     for (const ModelFile& f : entry.files) {
         const std::string full = path_join(models_dir, f.path);
-        if (file_exists(full) && file_size(full) == f.bytes) {
+        const bool downloaded = file_exists(full) && file_size(full) == f.bytes;
+        // A file that still needs post-processing is not usable yet, however
+        // complete the download itself is.
+        const bool usable = downloaded &&
+                            (f.post.empty() || file_exists(path_join(models_dir, f.post.output)));
+        if (usable) {
             ++present;
-        } else if (file_exists(full) || file_exists(full + ".part")) {
+        } else if (downloaded || file_exists(full) || file_exists(full + ".part")) {
             partial = true;
         }
     }

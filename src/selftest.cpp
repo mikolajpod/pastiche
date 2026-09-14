@@ -10,7 +10,21 @@ namespace pastiche {
 
 namespace {
 
-class QuietProgress final : public Progress {};
+// Swallows progress, but not diagnostics: with -v an algorithm's log lines are
+// the only window into what it actually did, and a self-test that hides them is
+// a self-test you cannot debug.
+class QuietProgress final : public Progress {
+public:
+    explicit QuietProgress(bool verbose) : verbose_(verbose) {}
+
+    void log(const std::string& line) override
+    {
+        if (verbose_) std::fprintf(stderr, "               %s\n", line.c_str());
+    }
+
+private:
+    bool verbose_ = false;
+};
 
 // Picks the <style> for an algorithm in a test: a synthetic image, the first
 // preset, or nothing. Returns false when the algorithm cannot run here.
@@ -49,8 +63,14 @@ int run_selftest(const RunOptions& opts)
             ++skipped;
             continue;
         }
+        if (const std::string reason = algo->unavailable_reason(opts); !reason.empty()) {
+            std::printf("%-14s %-6s %s\n", id.c_str(), "SKIP", reason.c_str());
+            ++skipped;
+            continue;
+        }
+
         const Params params = Params::defaults(algo->params());
-        QuietProgress progress;
+        QuietProgress progress(opts.verbose);
         const auto t0 = std::chrono::steady_clock::now();
         RunResult r = algo->run(content, style, style_name, params, opts, progress);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -61,7 +81,12 @@ int run_selftest(const RunOptions& opts)
                       " != " + std::to_string(content.width) + "x" + std::to_string(content.height);
         else if (is_uniform(r.image)) problem = "output is a uniform colour";
         std::string extra;
-        if (problem.empty() && !r.backend_used.empty() && r.backend_used != "cpu") {
+        if (problem.empty() && !algo->deterministic()) {
+            // Nothing to compare against: see IStyleAlgorithm::deterministic.
+            // The checks above (right size, not a uniform colour, no error) are
+            // what this algorithm can be held to (D23).
+            extra = ", not compared (stochastic)";
+        } else if (problem.empty() && !r.backend_used.empty() && r.backend_used != "cpu") {
             // Reference run on the CPU execution provider; GPU fp32 should agree closely.
             RunOptions cpu_opts = opts;
             cpu_opts.backend = "cpu";
@@ -114,7 +139,7 @@ int run_benchmark(const RunOptions& opts)
                 break;
             }
             const Params params = Params::defaults(algo->params());
-            QuietProgress progress;
+            QuietProgress progress(opts.verbose);
             double ms[2] = {0, 0};
             std::string note;
             for (int rep = 0; rep < 2; ++rep) {

@@ -5,11 +5,34 @@
 // build and start without it; the diffusion algorithm reports a clear error
 // instead of the process failing to start. Build the library with
 // tools/build_sdcpp.sh (D21).
+#include <stable-diffusion.h>
+
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace pastiche {
+
+// The entry points resolved from the library. Struct layouts come from the
+// header in third_party/stable-diffusion/include, which tools/build_sdcpp.sh
+// installs from the same pinned commit as the binary, so the two cannot drift
+// apart. Bumping SD_COMMIT in that script updates both at once.
+struct SdApi {
+    void (*ctx_params_init)(sd_ctx_params_t*) = nullptr;
+    sd_ctx_t* (*new_ctx)(const sd_ctx_params_t*) = nullptr;
+    void (*free_ctx)(sd_ctx_t*) = nullptr;
+
+    void (*img_gen_params_init)(sd_img_gen_params_t*) = nullptr;
+    bool (*generate_image)(sd_ctx_t*, const sd_img_gen_params_t*, sd_image_t**, int*) = nullptr;
+    void (*free_images)(sd_image_t*, int) = nullptr;
+
+    void (*set_progress_callback)(sd_progress_cb_t, void*) = nullptr;
+    void (*set_preview_callback)(sd_preview_cb_t, enum preview_t, int, bool, bool, void*) = nullptr;
+    void (*cancel_generation)(sd_ctx_t*, enum sd_cancel_mode_t) = nullptr;
+
+    enum sd_type_t (*str_to_type)(const char*) = nullptr;
+    const char* (*type_name)(enum sd_type_t) = nullptr;
+};
 
 // One entry of sd_list_devices(), which returns "name<TAB>description" lines.
 struct SdDevice {
@@ -49,6 +72,10 @@ public:
     // so callers can reject a bad --device with the list of valid names.
     const SdDevice* find_device(const std::string& name) const;
 
+    // Only valid while available(); every member is non-null in that case,
+    // because a missing symbol fails the load outright.
+    const SdApi& api() const { return api_; }
+
 private:
     SdRuntime();
     ~SdRuntime();
@@ -56,11 +83,15 @@ private:
     SdRuntime& operator=(const SdRuntime&) = delete;
 
     void query_devices();
+    // Resolves every entry point of api_. Returns the name of the first symbol
+    // that was missing, or "" when all of them were found.
+    std::string resolve_api();
 
     void* handle_ = nullptr;
     std::string error_;
     std::string library_path_;
     std::vector<SdDevice> devices_;
+    SdApi api_;
 
     // Entry points resolved from the library. More will join them when the
     // diffusion algorithm lands; these are the ones needed to report what is

@@ -3,6 +3,7 @@
 #include "core/fs.hpp"
 #include "core/http.hpp"
 #include "core/models.hpp"
+#include "core/safetensors.hpp"
 #include "core/sha256.hpp"
 
 #include <chrono>
@@ -180,6 +181,26 @@ int verify_models(const ModelCatalogue& catalogue, const std::string& models_dir
     return failures == 0 ? 0 : 1;
 }
 
+// Runs a file's postprocess step if it has one and the result is not already
+// there. Prints its own errors; returns false when the caller should give up.
+bool run_postprocess(const ModelFile& file, const std::string& models_dir)
+{
+    if (file.post.empty()) return true;
+
+    const std::string output = path_join(models_dir, file.post.output);
+    if (file_exists(output)) return true;
+
+    std::printf("  %-28s preparing %s...\n", file.path.c_str(), file.post.output.c_str());
+    const std::string error = safetensors_prefix_tensors(path_join(models_dir, file.path), output,
+                                                         file.post.prefix, file.post.drop);
+    if (!error.empty()) {
+        std::fprintf(stderr, "error: %s\n", error.c_str());
+        return false;
+    }
+    std::printf("  %-28s OK\n", file.post.output.c_str());
+    return true;
+}
+
 int download_one(const ModelEntry& entry, const std::string& models_dir, bool assume_yes)
 {
     if (model_status(entry, models_dir) == ModelStatus::Installed) {
@@ -198,6 +219,7 @@ int download_one(const ModelEntry& entry, const std::string& models_dir, bool as
 
         if (file_exists(dest) && file_size(dest) == file.bytes) {
             std::printf("  %-28s already present\n", file.path.c_str());
+            if (!run_postprocess(file, models_dir)) return 1;
             continue;
         }
 
@@ -230,6 +252,7 @@ int download_one(const ModelEntry& entry, const std::string& models_dir, bool as
             return 1;
         }
         std::printf("  %-28s OK\n", file.path.c_str());
+        if (!run_postprocess(file, models_dir)) return 1;
     }
 
     std::printf("%s downloaded.\n", entry.name.c_str());

@@ -69,6 +69,24 @@ public:
     virtual bool supports_tiling() const { return false; }
     virtual bool uses_gpu() const { return true; }
 
+    // False when the same inputs cannot be expected to give the same pixels on
+    // two backends. Diffusion sampling is iterative and chaotic, so a rounding
+    // difference well below the precision of the weights grows into a different
+    // but equally valid image; measured, the same model at the same precision
+    // on CPU versus Vulkan differs more than f32 versus q8_0 does (D23).
+    // --selftest uses this to decide whether comparing against a CPU reference
+    // proves anything.
+    virtual bool deterministic() const { return true; }
+
+    // Non-empty when the algorithm cannot run at all right now and why, for
+    // instance because its weights have not been downloaded. Callers report it
+    // and move on instead of treating it as a failure.
+    virtual std::string unavailable_reason(const RunOptions& opts) const
+    {
+        (void)opts;
+        return {};
+    }
+
     // GPU memory in bytes needed to process a w x h content image with these
     // parameters (activations + weights). 0 = nothing / unknown.
     virtual uint64_t estimate_vram(int w, int h, const Params& p, const RunOptions& opts) const = 0;

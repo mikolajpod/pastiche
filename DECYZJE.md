@@ -526,3 +526,111 @@ Stąd twarda konsekwencja dla etapu 5:
 - Zastrzeżenie: to jeden prompt i jedno ziarno przy 8 krokach. Ranking
   szybkości i odległości od referencji jest wyraźny i zgodny z teorią, ale
   gdyby kiedyś zależało od tego coś kosztownego, trzeba powtórzyć na serii.
+- **Sprostowanie (D24):** powyższe mierzone było w czystym txt2img, bez
+  IP-Adaptera i enkodera CLIP. Z nimi f16 nie mieści się na T2000 w żadnej
+  rozdzielczości, więc domyślną precyzją dla algorytmu dyfuzyjnego jest
+  **q8_0**, nie f16. Wniosek "f16 szybszy i dokładniejszy" pozostaje prawdziwy
+  tam, gdzie f16 się mieści (np. RTX 3060).
+
+## D24. Algorytm dyfuzyjny działa. Błąd w sd.cpp, obejście, realne limity pamięci (2026-09-14)
+
+Etap 5 ma wreszcie algorytm: `pastiche <treść> <styl> <wynik> diffusion`.
+Droga do tego prowadziła przez błąd w silniku, który kosztował pół dnia i dwie
+błędne diagnozy z mojej strony.
+
+### Błąd w stable-diffusion.cpp
+
+**Objaw:** wszystkie 519 tensorów enkodera CLIP-Vision zgłaszane jako
+`not in model metadata`, `new_sd_ctx` zwraca null. Odtwarzalne **stockowym
+`sd-cli`** wywołanym dokładnie jak w `docs/ip_adapter.md`, więc nie nasz kod.
+
+**Przyczyna,** znaleziona przez `git bisect` (51 commitów, 6 przebudów):
+commit **`7f986a9 feat: add SenseNova U1.5 support (#1935)`** dopisał
+`"vision_model."` do tablicy `unused_tensors[]` w `src/model_loader.cpp`.
+Ta lista jest stosowana **globalnie, do każdego wczytywanego pliku**,
+w `parse_file()` przez `is_unused_tensor()` z `starts_with`. Samodzielny
+enkoder CLIP-Vision z `h94/IP-Adapter` ma *wszystkie* tensory nazwane
+`vision_model.*`, więc wylatują co do jednego. Intencją było pominięcie wieży
+wizyjnej modelu językowego SenseNova; efektem ubocznym - wyłączenie
+IP-Adaptera dla SD 1.5 i SDXL.
+
+Potwierdzone dwustronnie: wersja `50062a4` (2026-08-02) wczytuje ten sam plik
+z zerem braków i generuje obraz.
+
+**Dwie hipotezy, które sprawdziłem i które były błędne** (zapisane, żeby nikt
+nie szedł tą drogą drugi raz):
+
+1. "Plik ma złe nazwy, trzeba go przemianować na `cond_stage_model.transformer.`".
+   Nie - w `name_conversion.cpp:1475` jest mapowanie
+   `clip_vision.` -> `cond_stage_model.transformer.`, więc oryginalny plik
+   z `h94/IP-Adapter` jest poprawny i nic nie wymaga tłumaczenia.
+2. "Konwersja nazw nie jest wołana dla clip_vision, bo `diffusion_engine.cpp`
+   używa `init_from_file` zamiast `init_from_file_and_convert_name`".
+   Podmieniłem tę linię i przebudowałem - **nie pomogło**, bo tensory znikają
+   wcześniej, przy parsowaniu pliku.
+
+### Obejście, bez ruszania silnika
+
+Filtr działa na **surowej nazwie z pliku, zanim** loader dokleja swój
+przedrostek `clip_vision.`, a nazwy **już** zaczynające się od tego przedrostka
+jego nie dostają (`if (!starts_with(name, prefix))`). Stąd:
+przemianowanie tensorów w pliku na `clip_vision.vision_model.*` jednocześnie
+omija filtr i ląduje dokładnie tam, gdzie loader ich szuka.
+
+Realizacja: `src/core/safetensors.cpp`, przepisanie samego nagłówka JSON -
+offsety w safetensors są liczone względem bufora danych, nie pliku, więc
+payload leci bajt w bajt bez zmian. Uruchamiane automatycznie po pobraniu,
+sterowane polem `postprocess` w `models.json`, więc użytkownik nie musi nic
+wiedzieć ani mieć Pythona (D8). Do usunięcia, gdy poprawka trafi do upstreamu.
+
+**To jest podstawa do zgłoszenia błędu:** mamy commit, mechanizm, jedną linię,
+sposób odtworzenia stockowym narzędziem i działającą wersję sprzed regresji.
+
+### Realne limity pamięci na T2000 (zmierzone)
+
+Z pełnym potokiem IP-Adaptera, 3,27 GiB dostępne, treść 320x240 skalowana
+przez `--size` (czyli liczba pikseli to nie kwadrat flagi):
+
+| precyzja | rozmiar | piksele | wynik |
+|---|---|---|---|
+| q8_0 | 512 -> 512x384 | 196k | działa |
+| q8_0 | 640 -> 640x480 | 307k | działa |
+| q8_0 | 704 -> 704x512 | 360k | brak pamięci |
+| q8_0 | 768 -> 768x576 | 442k | brak pamięci |
+| f16 | 256 -> 256x192 | 49k | brak pamięci |
+| f16 | 384, 448, 512 | - | brak pamięci |
+
+Wnioski:
+
+- **Domyślna precyzja: q8_0.** f16 nie mieści się z IP-Adapterem w żadnej
+  rozdzielczości, mimo że wagi różnią się tylko o 315 MB - bufory obliczeniowe
+  też są wymiarowane typem wag.
+- **Sufit to ok. 640 px** na dłuższym boku. Powyżej preflight odmawia.
+- **Enkoder CLIP (2,4 GB) trzymany w RAM** przez `params_backend = "clip=cpu"`.
+  Liczy raz, na starcie; rezydentny na karcie wypycha model dyfuzyjny i bieg
+  umiera w połowie UNetu.
+- Estymacja VRAM nie da się zdjąć z delty DXGI jak przy ORT, bo sd.cpp
+  segmentuje UNet i strumieniuje wagi - po biegu widać tylko to, co zostało
+  rezydentne (2,19 GiB przy q8_0, niezależnie od rozdzielczości). Stałe są więc
+  dopasowane do granic, przy których biegi realnie padają, bo to jest to, co
+  preflight ma przewidywać.
+
+### Zmiany w interfejsie algorytmów
+
+- `IStyleAlgorithm::deterministic()` - domyślnie true, dla dyfuzji false.
+  `--selftest` pomija wtedy porównanie z referencją CPU, zgodnie z D23.
+  Zostają: rozmiar, brak błędu, obraz nie jest jednolity.
+- `IStyleAlgorithm::unavailable_reason()` - niepusty, gdy algorytm nie ma jak
+  działać (brak wag, brak biblioteki). `--selftest` raportuje SKIP zamiast FAIL.
+- `QuietProgress` w selfteście przepuszcza `log()` przy `-v`. Self-test, który
+  ukrywa diagnostykę, jest self-testem, którego nie da się debugować.
+
+### Pułapka: numeracja urządzeń Vulkan nie jest stała
+
+`Vulkan0` bywa kartą dyskretną w jednym uruchomieniu, a układem
+zintegrowanym w następnym - ggml numeruje w kolejności enumeracji, a lista
+adapterów DXGI przestawia się tak samo. Zgubiło mnie to na godzinę, bo
+`--selftest` raportował `Vulkan0` i wyglądało to na wybór iGPU, podczas gdy
+`Vulkan0` był akurat Quadro. Stąd: dopasowanie po **opisie**, nigdy po
+indeksie, a `backend_used` raportuje `Vulkan0 (Quadro T2000)`, żeby sama
+nazwa nikogo więcej nie zmyliła.

@@ -64,4 +64,9 @@ private:
 // the kind of file that gets a trailing comma.
 JsonValue json_parse(const std::string& text, std::string& error);
 
+// Serialises back to compact JSON. Needed because safetensors files carry a
+// JSON header that has to be rewritten in place (see safetensors.hpp); the
+// hand-rolled rendering used for sidecars cannot do arbitrary values.
+std::string json_dump(const JsonValue& value);
+
 } // namespace pastiche

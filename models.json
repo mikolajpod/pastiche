@@ -55,7 +55,14 @@
           "path": "ip-adapter/image_encoder.safetensors",
           "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors",
           "sha256": "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030",
-          "bytes": 2528373448
+          "bytes": 2528373448,
+          "postprocess": {
+            "comment": "Works around an upstream bug (D24): stable-diffusion.cpp drops every tensor whose name starts with 'vision_model.' while loading ANY file, which empties this encoder completely. The filter runs before the loader adds its own 'clip_vision.' prefix, and names that already carry that prefix are left alone, so prefixing here both dodges the filter and lands the tensors where the loader expects them. Header-only rewrite; the weights are copied through untouched. Remove once the upstream fix lands.",
+            "op": "prefix_tensors",
+            "prefix": "clip_vision.",
+            "output": "ip-adapter/clip_vision_h.safetensors",
+            "drop": ["vision_model.embeddings.position_ids"]
+          }
         }
       ]
     }

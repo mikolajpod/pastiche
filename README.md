@@ -15,11 +15,11 @@ and the staged plan.
 | `identity` | none        | -                      | copies the content image; pipeline test  |
 | `johnson`  | preset      | ~0.8 s DirectML        | Johnson et al. 2016 feed-forward nets; presets candy, mosaic, pointilism, rain_princess, udnie (BSD-3) |
 | `adain`    | image       | ~1.1 s DirectML        | Huang & Belongie 2017, arbitrary style; `alpha`, `style_size`; tiling with global statistics |
-| `sd`       | image       | slow                   | SD 1.5 + IP-Adapter img2img via stable-diffusion.cpp (planned, stage 5) |
+| `diffusion`| image       | ~20 s Vulkan at 512 px | SD 1.5 + IP-Adapter img2img via stable-diffusion.cpp; `steps`, `strength`, `ip_scale`, `precision`; needs downloaded models |
 
-Both ONNX algorithms refuse to start when the estimated GPU memory exceeds
-what is free, and print the `--size` that would fit (plus `--tile` where
-supported). Nothing is rescaled silently.
+Every algorithm refuses to start when the estimated GPU memory exceeds what is
+free, and prints the `--size` that would fit (plus `--tile` where supported, or
+a lighter `precision` for diffusion). Nothing is rescaled silently.
 
 ## Command line
 
@@ -47,7 +47,15 @@ Example:
 pastiche photo.jpg - out/photo.png identity -p gamma=1.2
 pastiche photo.jpg mosaic out/mosaic.png johnson --size 1600
 pastiche photo.jpg vangogh.jpg out/adain.png adain -p alpha=0.8
+pastiche photo.jpg vangogh.jpg out/diff.png diffusion --size 512 -p strength=0.6
 ```
+
+`diffusion` is the slow, high-quality path: the style image is fed to
+IP-Adapter as an image prompt over SD 1.5 img2img. It needs models that are not
+in the release (`pastiche download sd15 ip-adapter-sd15 clip-vision`) and about
+a 4 GB GPU. On such a card it tops out near 640 px on the longer side and runs
+at the default `precision=q8_0`; where there is more memory, `precision=f16` is
+faster and closer to full precision. `pastiche --help diffusion` lists the rest.
 
 Parameters are declared by each algorithm; `pastiche --help <algo>` prints
 them with types, ranges and defaults. The GUI builds its controls from the
