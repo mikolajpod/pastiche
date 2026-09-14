@@ -170,6 +170,8 @@ struct App {
     char out_dir[1024] = {};
 
     std::string preflight_msg;   // refusal text when the run would not fit
+    std::string unavailable_msg; // why the algorithm cannot run at all (missing weights)
+    bool log_open = false;       // last frame's state of the Log header, for footer sizing
     int suggested_size = 0;
     uint64_t vram_estimate = 0;
     std::string status;          // one-line status shown under the buttons
@@ -221,9 +223,18 @@ void select_algo(App& app, int index)
 void refresh_preflight(App& app)
 {
     app.preflight_msg.clear();
+    app.unavailable_msg.clear();
     app.suggested_size = 0;
     app.vram_estimate = 0;
-    if (!app.algo || !app.content.loaded()) return;
+    if (!app.algo) return;
+
+    // Asked before anything else and independently of the inputs: an algorithm
+    // whose weights are missing cannot run whatever is loaded, and the answer
+    // is a download, not a smaller image.
+    app.unavailable_msg = app.algo->unavailable_reason(app.options());
+    if (!app.unavailable_msg.empty()) return;
+
+    if (!app.content.loaded()) return;
     int w = app.content.img.width, h = app.content.img.height;
     if (app.size > 0) {
         const double s = static_cast<double>(app.size) / std::max(w, h);
@@ -524,12 +535,47 @@ void draw_param_widget(App& app, const ParamSpec& spec)
     if (changed) refresh_preflight(app);
 }
 
+// Height the footer below the settings needs: the refusal text, the buttons,
+// the progress bar and the log header. Computed rather than guessed because it
+// is reserved before any of it is drawn.
+float params_footer_height(const App& app, bool running, float wrap_w)
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float line = ImGui::GetTextLineHeightWithSpacing();
+    const float frame = ImGui::GetFrameHeightWithSpacing();
+
+    float h = style.ItemSpacing.y * 2.f;   // the two Spacing() calls below
+    if (app.content.loaded() && app.algo && app.algo->uses_gpu() && app.vram_estimate > 0) h += line;
+    if (!app.unavailable_msg.empty()) {
+        h += ImGui::CalcTextSize(app.unavailable_msg.c_str(), nullptr, false, wrap_w).y +
+             style.ItemSpacing.y + line;
+    }
+    if (!app.preflight_msg.empty()) {
+        h += ImGui::CalcTextSize(app.preflight_msg.c_str(), nullptr, false, wrap_w).y + style.ItemSpacing.y;
+        if (app.suggested_size > 0) h += frame;
+    }
+    h += frame;                                            // Run / Cancel
+    if (running) h += frame;                               // progress bar
+    if (!app.status.empty()) {
+        h += ImGui::CalcTextSize(app.status.c_str(), nullptr, false, wrap_w).y + style.ItemSpacing.y;
+    }
+    h += frame;                                            // "Log" header
+    if (app.log_open) h += 120.f + style.ItemSpacing.y;    // the log child itself
+    return h;
+}
+
 void draw_params_panel(App& app, ImVec2 size)
 {
     ImGui::BeginChild("Parameters", size, ImGuiChildFlags_Borders);
     const bool running = app.worker.running;
     ImGui::TextUnformatted("Parameters");
     ImGui::Separator();
+
+    // Everything above the buttons scrolls, the buttons do not. Nesting a
+    // second scroll area inside this one was the first attempt and gave two
+    // scrollbars side by side in a default-sized window, which looked broken.
+    const float footer = params_footer_height(app, running, ImGui::GetContentRegionAvail().x);
+    ImGui::BeginChild("settings", ImVec2(0.f, -footer), ImGuiChildFlags_None);
 
     ImGui::BeginDisabled(running);
     // Algorithm
@@ -585,11 +631,21 @@ void draw_params_panel(App& app, ImVec2 size)
         if (pick_folder(d, app.out_dir)) std::snprintf(app.out_dir, sizeof app.out_dir, "%s", d.c_str());
     }
     ImGui::EndDisabled();
+    ImGui::EndChild();   // settings
 
     // VRAM / preflight
     ImGui::Spacing();
     if (app.content.loaded() && app.algo && app.algo->uses_gpu() && app.vram_estimate > 0)
         ImGui::TextDisabled("estimated GPU memory: %s", human_size(app.vram_estimate).c_str());
+    if (!app.unavailable_msg.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.6f, 0.3f, 1.f));
+        ImGui::TextWrapped("%s", app.unavailable_msg.c_str());
+        ImGui::PopStyleColor();
+        // No button for it yet: downloading needs the licence screen the CLI
+        // has, so point at the command rather than starting a multi-gigabyte
+        // transfer from a control that cannot show the terms.
+        ImGui::TextDisabled("Run that command in a terminal, then reopen this window.");
+    }
     if (!app.preflight_msg.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.6f, 0.3f, 1.f));
         ImGui::TextWrapped("%s", app.preflight_msg.c_str());
@@ -606,7 +662,8 @@ void draw_params_panel(App& app, ImVec2 size)
 
     // Run / cancel / progress
     ImGui::Spacing();
-    const bool can_run = !running && app.algo && app.content.loaded() && app.preflight_msg.empty() &&
+    const bool can_run = !running && app.algo && app.content.loaded() &&
+                         app.preflight_msg.empty() && app.unavailable_msg.empty() &&
                          (app.algo->style_input() != StyleInput::Image || app.style.loaded()) &&
                          (app.algo->style_input() != StyleInput::Preset || !app.presets.empty());
     ImGui::BeginDisabled(!can_run);
@@ -631,7 +688,10 @@ void draw_params_panel(App& app, ImVec2 size)
     }
     if (!app.status.empty()) ImGui::TextWrapped("%s", app.status.c_str());
 
-    if (ImGui::CollapsingHeader("Log")) {
+    // Remembered so the reserved footer height can account for the log next
+    // frame; one frame of lag is invisible.
+    app.log_open = ImGui::CollapsingHeader("Log");
+    if (app.log_open) {
         ImGui::BeginChild("log", ImVec2(0, 120), ImGuiChildFlags_Borders);
         for (const std::string& l : app.log) ImGui::TextWrapped("%s", l.c_str());
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.f);

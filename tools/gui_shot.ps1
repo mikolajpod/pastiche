@@ -51,6 +51,7 @@ public class PasticheGui {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
@@ -75,7 +76,26 @@ $origin = New-Object PasticheGui+POINT
 [void][PasticheGui]::ClientToScreen($hwnd, [ref]$origin)
 Write-Output "window '$($proc.MainWindowTitle)', client origin ($($origin.X),$($origin.Y))"
 
+# Windows refuses to hand the foreground to a process that did not earn it, and
+# SetForegroundWindow fails silently when it does. That is not cosmetic: clicks
+# are delivered to screen coordinates and screenshots copy whatever pixels are
+# there, so with another window on top this script would click inside it and
+# photograph its contents. Both have happened. Check before every action and
+# stop instead.
+function Assert-Foreground([string]$what) {
+    if ([PasticheGui]::GetForegroundWindow() -ne $hwnd) {
+        Write-Output "FAIL: the GUI is not the foreground window, refusing to $what."
+        Write-Output "      Another window is on top; clicks would land in it. Close or"
+        Write-Output "      minimise it, leave the machine alone during the run, and retry."
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        exit 2
+    }
+}
+
+Assert-Foreground "start"
+
 function Invoke-Click([int]$x, [int]$y, [int]$times) {
+    Assert-Foreground "click"
     [void][PasticheGui]::SetCursorPos($origin.X + $x, $origin.Y + $y)
     Start-Sleep -Milliseconds 250
     for ($i = 0; $i -lt $times; $i++) {
@@ -87,6 +107,7 @@ function Invoke-Click([int]$x, [int]$y, [int]$times) {
 }
 
 function Save-Shot([string]$file) {
+    Assert-Foreground "take a screenshot"
     $r = New-Object PasticheGui+RECT
     [void][PasticheGui]::GetWindowRect($hwnd, [ref]$r)
     $bmp = New-Object System.Drawing.Bitmap(($r.Right - $r.Left), ($r.Bottom - $r.Top))

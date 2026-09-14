@@ -28,7 +28,8 @@ using namespace pastiche;
 
 namespace {
 
-enum ExitCode { EX_OK = 0, EX_USAGE = 1, EX_INPUT = 2, EX_RUN = 3, EX_CANCELLED = 4, EX_VRAM = 5 };
+enum ExitCode { EX_OK = 0, EX_USAGE = 1, EX_INPUT = 2, EX_RUN = 3, EX_CANCELLED = 4, EX_VRAM = 5,
+                EX_UNAVAILABLE = 6 };  // the algorithm cannot run here, e.g. weights not downloaded
 
 void print_usage(FILE* f)
 {
@@ -333,6 +334,13 @@ int run_cli(const std::vector<std::string>& args)
                            : (style_name.empty() ? "-" : style_name.c_str()),
                      algo_id.c_str(), opts.models_dir.c_str());
         std::fprintf(stderr, "params: %s\n", params_to_json(specs, params).c_str());
+    }
+
+    // Can this algorithm run at all here? Missing weights are not a VRAM
+    // problem and must not be answered with "use a smaller --size".
+    if (const std::string reason = algo->unavailable_reason(opts); !reason.empty()) {
+        std::fprintf(stderr, "error: %s\n", reason.c_str());
+        return EX_UNAVAILABLE;
     }
 
     // VRAM estimate and refusal (D5): nothing is scaled automatically.

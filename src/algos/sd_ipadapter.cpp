@@ -272,10 +272,10 @@ public:
 
     std::string preflight(int w, int h, const Params& p, const RunOptions& opts) const override
     {
+        // Missing weights are reported through unavailable_reason(), not from
+        // here: this answers "will it fit", and conflating the two would offer
+        // a smaller --size as the fix for a file that has not been downloaded.
         if (opts.backend == "cpu") return {};
-
-        const std::string missing = missing_models(opts);
-        if (!missing.empty()) return missing;
 
         const uint64_t need = estimate_vram(w, h, p, opts);
         const GpuMemoryInfo gpu = query_gpu_memory();
