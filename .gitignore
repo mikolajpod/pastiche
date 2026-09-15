@@ -20,8 +20,9 @@ third_party/
 # Local collection of public-domain style images (not part of the release)
 styles/
 
-# Research papers are large (8-37 MB each); figures cmp_*.png stay tracked
+# Research papers and figures cut from them stay local (size and copyright)
 research/*.pdf
+research/*.png
 
 # ImGui layout (user-local)
 imgui.ini

@@ -33,7 +33,8 @@ Data rozpoczęcia: 2026-09-12
   autogradu, czyli LibTorch i MSVC; Johnson/Ulyanov są wizualnie prawie
   nieodróżnialne od Gatysa (Johnson 2016, Jing 2020); dyfuzja daje wyższą
   jakość. Jeśli kiedyś wróci, to jako NNST-Opt lub STROTSS, nie oryginał.
-  Materiały porównawcze: research/cmp_*.png, sekcja w notatce.
+  Materiały porównawcze: research/cmp_*.png (figury z prac, tylko lokalnie,
+  poza repozytorium), sekcja w notatce.
 
 ## D2. Backend GPU (2026-09-12) - wariant C
 
