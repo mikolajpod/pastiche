@@ -806,7 +806,7 @@ int main(int argc, char* argv[])
     std::snprintf(app.out_dir, sizeof app.out_dir, "%s", path_join(exe_dir(), "out").c_str());
     // Prefer a real algorithm over identity as the initial selection.
     int initial = 0;
-    for (size_t i = 0; i < app.algo_ids.size(); ++i) if (app.algo_ids[i] == "johnson") initial = static_cast<int>(i);
+    for (size_t i = 0; i < app.algo_ids.size(); ++i) if (app.algo_ids[i] == "adain") initial = static_cast<int>(i);
     select_algo(app, initial);
     if (argc > 1 && app.content.load(argv[1])) refresh_preflight(app);
     if (argc > 2) app.style.load(argv[2]);
