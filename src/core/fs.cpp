@@ -170,7 +170,11 @@ std::string path_join(const std::string& a, const std::string& b)
     if (b.empty()) return a;
     const char last = a.back();
     if (last == '/' || last == '\\') return a + b;
+#ifdef _WIN32
+    return a + "\\" + b;   // native separator, so paths shown to the user are not mixed
+#else
     return a + "/" + b;
+#endif
 }
 
 std::string path_dirname(const std::string& p)

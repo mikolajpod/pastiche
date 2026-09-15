@@ -178,7 +178,11 @@ TEST_CASE("fs helpers")
     CHECK(replace_extension("out/img.png", ".json") == "out/img.json");
     CHECK(replace_extension("out/img", ".json") == "out/img.json");
     CHECK(path_join("a/", "b") == "a/b");
+#ifdef _WIN32
+    CHECK(path_join("a", "b") == "a\\b");
+#else
     CHECK(path_join("a", "b") == "a/b");
+#endif
     CHECK(timestamp_now().size() == 15);
     const std::string d = temp_path("dir/sub");
     CHECK(make_dirs(d));
